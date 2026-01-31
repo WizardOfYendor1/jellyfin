@@ -18,6 +18,7 @@ using MediaBrowser.Common.Configuration;
 using MediaBrowser.Common.Extensions;
 using MediaBrowser.Controller.Configuration;
 using MediaBrowser.Controller.Library;
+using MediaBrowser.Controller.LiveTv;
 using MediaBrowser.Controller.MediaEncoding;
 using MediaBrowser.Controller.Session;
 using MediaBrowser.Controller.Streaming;
@@ -44,6 +45,7 @@ public sealed class TranscodeManager : ITranscodeManager, IDisposable
     private readonly IMediaEncoder _mediaEncoder;
     private readonly IMediaSourceManager _mediaSourceManager;
     private readonly IAttachmentExtractor _attachmentExtractor;
+    private readonly IEnumerable<IWarmProcessProvider> _warmProcessProviders;
 
     private readonly List<TranscodingJob> _activeTranscodingJobs = new();
     private readonly AsyncKeyedLocker<string> _transcodingLocks = new(o =>
@@ -67,6 +69,7 @@ public sealed class TranscodeManager : ITranscodeManager, IDisposable
     /// <param name="mediaEncoder">The <see cref="IMediaEncoder"/>.</param>
     /// <param name="mediaSourceManager">The <see cref="IMediaSourceManager"/>.</param>
     /// <param name="attachmentExtractor">The <see cref="IAttachmentExtractor"/>.</param>
+    /// <param name="warmProcessProviders">The <see cref="IWarmProcessProvider"/> implementations.</param>
     public TranscodeManager(
         ILoggerFactory loggerFactory,
         IFileSystem fileSystem,
@@ -77,7 +80,8 @@ public sealed class TranscodeManager : ITranscodeManager, IDisposable
         EncodingHelper encodingHelper,
         IMediaEncoder mediaEncoder,
         IMediaSourceManager mediaSourceManager,
-        IAttachmentExtractor attachmentExtractor)
+        IAttachmentExtractor attachmentExtractor,
+        IEnumerable<IWarmProcessProvider> warmProcessProviders)
     {
         _loggerFactory = loggerFactory;
         _fileSystem = fileSystem;
@@ -89,6 +93,7 @@ public sealed class TranscodeManager : ITranscodeManager, IDisposable
         _mediaEncoder = mediaEncoder;
         _mediaSourceManager = mediaSourceManager;
         _attachmentExtractor = attachmentExtractor;
+        _warmProcessProviders = warmProcessProviders;
 
         _logger = loggerFactory.CreateLogger<TranscodeManager>();
         DeleteEncodedMediaCache();
@@ -224,13 +229,40 @@ public sealed class TranscodeManager : ITranscodeManager, IDisposable
         lock (_activeTranscodingJobs)
         {
             _activeTranscodingJobs.Remove(job);
+        }
 
-            if (job.CancellationTokenSource?.IsCancellationRequested == false)
+        // For LiveTV streams, offer the running FFmpeg process to warm pool providers
+        // before killing it. If adopted, the provider takes full ownership of the
+        // process, files, and live stream — we skip all cleanup.
+        if (job.MediaSource?.IsInfiniteStream == true
+            && job.Process is not null
+            && !job.HasExited
+            && !string.IsNullOrWhiteSpace(job.MediaSource.Id)
+            && !string.IsNullOrWhiteSpace(job.Path))
+        {
+            var mediaSourceId = job.MediaSource.Id;
+            var playlistPath = job.Path;
+
+            foreach (var provider in _warmProcessProviders)
             {
-#pragma warning disable CA1849 // Can't await in lock block
-                job.CancellationTokenSource.Cancel();
-#pragma warning restore CA1849
+                if (provider.TryAdoptProcess(mediaSourceId, playlistPath, job.Process))
+                {
+                    _logger.LogInformation(
+                        "Warm pool adopted FFmpeg process for media source {MediaSourceId}. Skipping kill. PlaylistPath: {Path}",
+                        mediaSourceId,
+                        playlistPath);
+
+                    // Process is now owned by the warm pool — do NOT cancel CTS,
+                    // stop the process, delete files, or close the live stream.
+                    return;
+                }
             }
+        }
+
+        // No warm pool adoption — proceed with normal kill
+        if (job.CancellationTokenSource?.IsCancellationRequested == false)
+        {
+            await job.CancellationTokenSource.CancelAsync().ConfigureAwait(false);
         }
 
         job.Stop();
