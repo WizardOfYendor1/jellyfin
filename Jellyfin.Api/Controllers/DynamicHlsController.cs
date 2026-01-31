@@ -61,6 +61,7 @@ public class DynamicHlsController : BaseJellyfinApiController
     private readonly IDynamicHlsPlaylistGenerator _dynamicHlsPlaylistGenerator;
     private readonly DynamicHlsHelper _dynamicHlsHelper;
     private readonly IEnumerable<IWarmProcessProvider> _warmProcessProviders;
+    private static int _warmProviderLoggedOnce;
     private readonly EncodingOptions _encodingOptions;
 
     /// <summary>
@@ -106,7 +107,7 @@ public class DynamicHlsController : BaseJellyfinApiController
         _warmProcessProviders = warmProcessProviders;
 
         var warmProviderCount = _warmProcessProviders.Count();
-        if (warmProviderCount > 0)
+        if (warmProviderCount > 0 && Interlocked.Exchange(ref _warmProviderLoggedOnce, 1) == 0)
         {
             _logger.LogInformation("DynamicHlsController: {Count} warm process provider(s) registered", warmProviderCount);
         }
@@ -312,7 +313,7 @@ public class DynamicHlsController : BaseJellyfinApiController
         if (state.MediaSource?.IsInfiniteStream == true)
         {
             var warmSourceId = state.MediaSource.Id;
-            _logger.LogDebug("Warm pool check: media source {MediaSourceId} is infinite stream, querying {Count} provider(s)", warmSourceId, _warmProcessProviders.Count());
+            _logger.LogInformation("Warm pool check: media source {MediaSourceId} is infinite stream, querying {Count} provider(s)", warmSourceId, _warmProcessProviders.Count());
             foreach (var warmProvider in _warmProcessProviders)
             {
                 if (warmProvider.TryGetWarmPlaylist(warmSourceId, out var warmPlaylistPath)
@@ -329,11 +330,11 @@ public class DynamicHlsController : BaseJellyfinApiController
                 }
             }
 
-            _logger.LogDebug("Warm pool MISS for media source {MediaSourceId}, proceeding with cold start", warmSourceId);
+            _logger.LogInformation("Warm pool MISS for media source {MediaSourceId}, proceeding with cold start", warmSourceId);
         }
         else
         {
-            _logger.LogDebug("Warm pool check skipped: media source {SourceId} IsInfiniteStream={IsInfinite}", state.MediaSource?.Id, state.MediaSource?.IsInfiniteStream);
+            _logger.LogInformation("Warm pool check skipped: media source {SourceId} IsInfiniteStream={IsInfinite}", state.MediaSource?.Id, state.MediaSource?.IsInfiniteStream);
         }
 
         if (!System.IO.File.Exists(playlistPath))
