@@ -245,12 +245,31 @@ public sealed class TranscodeManager : ITranscodeManager, IDisposable
 
             foreach (var provider in _warmProcessProviders)
             {
-                if (provider.TryAdoptProcess(mediaSourceId, playlistPath, job.Process))
+                if (provider.TryAdoptProcess(mediaSourceId, playlistPath, job.Process, job.LiveStreamId))
                 {
                     _logger.LogInformation(
                         "Warm pool adopted FFmpeg process for media source {MediaSourceId}. Skipping kill. PlaylistPath: {Path}",
                         mediaSourceId,
                         playlistPath);
+
+                    // Bump the live stream's ConsumerCount so that when
+                    // SessionManager.OnPlaybackStopped → CloseLiveStreamIfNeededAsync
+                    // runs (independently, after this method returns), it decrements
+                    // to 1 instead of 0 and does NOT actually close the stream.
+                    // The warm pool provider is responsible for eventually calling
+                    // IMediaSourceManager.CloseLiveStream() when it evicts the process.
+                    if (!string.IsNullOrWhiteSpace(job.LiveStreamId))
+                    {
+                        var liveStream = _mediaSourceManager.GetLiveStreamInfo(job.LiveStreamId);
+                        if (liveStream is not null)
+                        {
+                            liveStream.ConsumerCount++;
+                            _logger.LogInformation(
+                                "Bumped live stream {LiveStreamId} consumer count to {Count} to keep alive for warm pool",
+                                job.LiveStreamId,
+                                liveStream.ConsumerCount);
+                        }
+                    }
 
                     // Process is now owned by the warm pool — do NOT cancel CTS,
                     // stop the process, delete files, or close the live stream.

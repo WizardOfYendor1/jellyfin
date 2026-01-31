@@ -20,10 +20,14 @@ public interface IWarmProcessProvider
     /// Offers a running FFmpeg process to the warm pool when a LiveTV transcode is about
     /// to be killed. If the provider adopts the process, the caller must NOT kill it,
     /// delete its files, or close the live stream — the provider takes full ownership.
+    /// The provider is responsible for eventually calling
+    /// <c>IMediaSourceManager.CloseLiveStream(liveStreamId)</c> when evicting the process.
     /// </summary>
     /// <param name="mediaSourceId">The media source ID.</param>
     /// <param name="playlistPath">The HLS playlist path on disk.</param>
     /// <param name="ffmpegProcess">The running FFmpeg process.</param>
+    /// <param name="liveStreamId">The live stream ID for the underlying tuner connection (e.g., SharedHttpStream).
+    /// The provider must close this when it eventually stops the warm process.</param>
     /// <returns>True if the provider adopted the process; false to proceed with normal kill.</returns>
-    bool TryAdoptProcess(string mediaSourceId, string playlistPath, Process ffmpegProcess);
+    bool TryAdoptProcess(string mediaSourceId, string playlistPath, Process ffmpegProcess, string? liveStreamId);
 }
