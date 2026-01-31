@@ -18,6 +18,7 @@ using Jellyfin.MediaEncoding.Hls.Playlist;
 using MediaBrowser.Common.Configuration;
 using MediaBrowser.Controller.Configuration;
 using MediaBrowser.Controller.Library;
+using MediaBrowser.Controller.LiveTv;
 using MediaBrowser.Controller.MediaEncoding;
 using MediaBrowser.Controller.Streaming;
 using MediaBrowser.MediaEncoding.Encoder;
@@ -59,6 +60,7 @@ public class DynamicHlsController : BaseJellyfinApiController
     private readonly EncodingHelper _encodingHelper;
     private readonly IDynamicHlsPlaylistGenerator _dynamicHlsPlaylistGenerator;
     private readonly DynamicHlsHelper _dynamicHlsHelper;
+    private readonly IEnumerable<IWarmProcessProvider> _warmProcessProviders;
     private readonly EncodingOptions _encodingOptions;
 
     /// <summary>
@@ -75,6 +77,7 @@ public class DynamicHlsController : BaseJellyfinApiController
     /// <param name="dynamicHlsHelper">Instance of <see cref="DynamicHlsHelper"/>.</param>
     /// <param name="encodingHelper">Instance of <see cref="EncodingHelper"/>.</param>
     /// <param name="dynamicHlsPlaylistGenerator">Instance of <see cref="IDynamicHlsPlaylistGenerator"/>.</param>
+    /// <param name="warmProcessProviders">Warm process providers from plugins.</param>
     public DynamicHlsController(
         ILibraryManager libraryManager,
         IUserManager userManager,
@@ -86,7 +89,8 @@ public class DynamicHlsController : BaseJellyfinApiController
         ILogger<DynamicHlsController> logger,
         DynamicHlsHelper dynamicHlsHelper,
         EncodingHelper encodingHelper,
-        IDynamicHlsPlaylistGenerator dynamicHlsPlaylistGenerator)
+        IDynamicHlsPlaylistGenerator dynamicHlsPlaylistGenerator,
+        IEnumerable<IWarmProcessProvider> warmProcessProviders)
     {
         _libraryManager = libraryManager;
         _userManager = userManager;
@@ -99,6 +103,13 @@ public class DynamicHlsController : BaseJellyfinApiController
         _dynamicHlsHelper = dynamicHlsHelper;
         _encodingHelper = encodingHelper;
         _dynamicHlsPlaylistGenerator = dynamicHlsPlaylistGenerator;
+        _warmProcessProviders = warmProcessProviders;
+
+        var warmProviderCount = _warmProcessProviders.Count();
+        if (warmProviderCount > 0)
+        {
+            _logger.LogInformation("DynamicHlsController: {Count} warm process provider(s) registered", warmProviderCount);
+        }
 
         _encodingOptions = serverConfigurationManager.GetEncodingOptions();
     }
@@ -296,6 +307,34 @@ public class DynamicHlsController : BaseJellyfinApiController
 
         TranscodingJob? job = null;
         var playlistPath = Path.ChangeExtension(state.OutputFilePath, ".m3u8");
+
+        // Check warm process providers for pre-buffered LiveTV streams
+        if (state.MediaSource?.IsInfiniteStream == true)
+        {
+            var warmSourceId = state.MediaSource.Id;
+            _logger.LogDebug("Warm pool check: media source {MediaSourceId} is infinite stream, querying {Count} provider(s)", warmSourceId, _warmProcessProviders.Count());
+            foreach (var warmProvider in _warmProcessProviders)
+            {
+                if (warmProvider.TryGetWarmPlaylist(warmSourceId, out var warmPlaylistPath)
+                    && warmPlaylistPath is not null)
+                {
+                    if (System.IO.File.Exists(warmPlaylistPath))
+                    {
+                        _logger.LogInformation("Warm process HIT for media source {MediaSourceId}, serving playlist: {Path}", warmSourceId, warmPlaylistPath);
+                        var warmText = await System.IO.File.ReadAllTextAsync(warmPlaylistPath, cancellationToken).ConfigureAwait(false);
+                        return Content(warmText, MimeTypes.GetMimeType("playlist.m3u8"));
+                    }
+
+                    _logger.LogWarning("Warm provider returned playlist for {MediaSourceId} but file not found on disk: {Path}", warmSourceId, warmPlaylistPath);
+                }
+            }
+
+            _logger.LogDebug("Warm pool MISS for media source {MediaSourceId}, proceeding with cold start", warmSourceId);
+        }
+        else
+        {
+            _logger.LogDebug("Warm pool check skipped: media source {SourceId} IsInfiniteStream={IsInfinite}", state.MediaSource?.Id, state.MediaSource?.IsInfiniteStream);
+        }
 
         if (!System.IO.File.Exists(playlistPath))
         {
