@@ -136,7 +136,75 @@ dotnet build
 # Deploy: copy DLL to Jellyfin plugins directory
 # Windows: C:\ProgramData\Jellyfin\Server\plugins\WarmPool\Jellyfin.Plugin.WarmPool.dll
 # Linux: /var/lib/jellyfin/plugins/WarmPool/Jellyfin.Plugin.WarmPool.dll
+# Docker: /config/plugins/WarmPool/Jellyfin.Plugin.WarmPool.dll (inside container)
 ```
+
+### Docker Deployment
+
+**Production Environment**: Ubuntu server running Jellyfin in Docker container, managed via Portainer.
+
+**Build Workflow**:
+1. Build plugin locally (on Windows development machine)
+2. Copy DLL to Docker host
+3. Restart Jellyfin container to load new plugin version
+
+**Deployment Steps**:
+```bash
+# On development machine (Windows)
+cd C:\sourcecode\GitHub\jellyfin-plugin-warmpool
+dotnet build
+
+# Copy DLL to Docker host (via scp, shared volume, or Portainer file upload)
+# Example using scp:
+scp bin/Debug/net10.0/Jellyfin.Plugin.WarmPool.dll user@ubuntu-server:/path/to/jellyfin/config/plugins/WarmPool/
+
+# Restart container via Portainer UI or Docker CLI on Ubuntu server:
+docker restart jellyfin
+```
+
+**Plugin Path in Container**:
+- Jellyfin typically mounts config at `/config` inside the container
+- Plugins directory: `/config/plugins/WarmPool/`
+- The host path depends on your Docker volume mapping (e.g., `/srv/jellyfin/config/plugins/WarmPool/`)
+
+**Verification**:
+- Check Jellyfin logs after restart: `docker logs jellyfin`
+- Look for: `[PluginManager] Loaded plugin: Warm FFmpeg Process Pool 1.6.0`
+- Access plugin settings in Jellyfin web UI: Dashboard → Plugins → Warm FFmpeg Process Pool
+
+### Plugin Version Management
+
+**IMPORTANT**: After each set of changes to the plugin, you **MUST** increment the version number in `build.props` according to semantic versioning (semver) standards:
+
+- **MAJOR** (X.0.0): Increment for breaking changes, incompatible API changes, or when the plugin requires a newer Jellyfin server version
+- **MINOR** (x.Y.0): Increment for new features, functionality additions, or enhancements that are backwards-compatible
+- **PATCH** (x.y.Z): Increment for bug fixes, performance improvements, or other backwards-compatible changes
+
+Version number location: `jellyfin-plugin-warmpool/Jellyfin.Plugin.WarmPool.csproj` in the `<Version>`, `<AssemblyVersion>`, and `<FileVersion>` elements.
+
+Examples:
+- Bug fix in pool cleanup logic: 1.3.0 → 1.3.1
+- Add new configuration option: 1.3.1 → 1.4.0
+- Change IWarmProcessProvider interface (breaking): 1.4.0 → 2.0.0
+
+### Plugin Development Workflow
+
+After making changes to the plugin, follow this workflow:
+
+1. **Increment version** according to semantic versioning (see above)
+2. **Build the plugin** to verify no compilation errors:
+   ```bash
+   cd C:\sourcecode\GitHub\jellyfin-plugin-warmpool
+   dotnet build
+   ```
+3. **After successful build**, commit and push changes:
+   ```bash
+   git add .
+   git commit -m "Descriptive commit message (e.g., 'Fix checkbox bug in configuration page')"
+   git push
+   ```
+
+Always verify the build succeeds before committing to avoid pushing broken code.
 
 ### Key Plugin Design
 
@@ -144,7 +212,30 @@ dotnet build
 - **Adoption**: On playback stop, adopts FFmpeg process + stores `liveStreamId` for tuner cleanup
 - **Eviction**: Kills FFmpeg, deletes segments, calls `IMediaSourceManager.CloseLiveStream(liveStreamId)`
 - **Pool size**: Configurable max warm processes (default 3)
-- **Current version**: 1.3.0 (automatic adoption + live stream lifecycle management)
+- **Current version**: 1.6.0 (automatic adoption + encoding profile API parameters + fixed checkbox bug)
+
+### Warm Pool Population: Automatic vs Manual
+
+**IMPORTANT**: All LiveTV tuning requests from Jellyfin clients (web interface, mobile apps, etc.) should use **automatic adoption**, NOT manual pre-warming.
+
+**Automatic Adoption (Recommended)**:
+- When a client tunes a channel and then stops watching, the FFmpeg process is automatically adopted into the warm pool
+- The exact encoding profile the client requested is captured (e.g., h264/aac 1920x1080 20Mbps)
+- Next time ANY client tunes the same channel with the same encoding profile, it's a warm HIT
+- No configuration needed - just enable the warm pool via the checkbox in plugin settings
+- This is the primary design and works perfectly for normal Jellyfin client usage
+
+**Manual Pre-Warming (Advanced)**:
+- Via REST API: `POST /WarmPool/Start?channelId=...&streamUrl=...&videoCodec=h264&audioCodec=aac&videoBitrate=20000000&audioBitrate=256000&width=1920&height=1080&audioChannels=2`
+- Useful for pre-warming channels during server startup or based on viewing history
+- **Limitation**: Currently uses FFmpeg `-codec copy` regardless of specified encoding profile parameters
+- The encoding profile is only used for pool key matching, not actual FFmpeg transcoding
+- Future enhancement: Build full FFmpeg transcode command based on encoding profile
+
+**Common Issue**: If you see continuous warm pool MISSES for the same channel:
+1. Check that the warm pool is **enabled** via the plugin settings checkbox
+2. Verify encoding profiles match between warm pool entries and client requests
+3. For clients requesting transcoding (h264/aac), manually started processes with "copy/copy" codec won't match
 
 ### Known Gap: Encoding Parameter Matching
 
