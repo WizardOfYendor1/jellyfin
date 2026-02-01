@@ -6,6 +6,18 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Jellyfin is a free software media system — a fork of Emby 3.5.2. This repository contains the **server backend** written in C# targeting .NET 10.0. The web client is in a separate `jellyfin-web` repository.
 
+### Plugin-First Development Philosophy
+
+**IMPORTANT**: When implementing new features or modifications, **minimize changes to the Jellyfin server codebase**. Prefer implementing functionality in plugins (like `jellyfin-plugin-warmpool`) whenever possible or feasible. The server should only provide minimal hook interfaces (like `IWarmProcessProvider`, `IWarmStreamProvider`) while keeping all business logic in the plugin. This approach:
+
+- Keeps the core server lean and maintainable
+- Allows features to be optional and independently versioned
+- Reduces the risk of breaking core functionality
+- Makes features easier to test, update, and disable
+- Enables deployment without server recompilation
+
+Only add server-side code when absolutely necessary (e.g., defining plugin interfaces, adding essential hooks at integration points). All feature logic, algorithms, and business rules should live in the plugin.
+
 ## Build & Test Commands
 
 ```bash
