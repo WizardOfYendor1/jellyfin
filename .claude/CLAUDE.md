@@ -103,7 +103,7 @@ These are independent cleanup paths — both run even if the other has side effe
 
 `IWarmProcessProvider` (`MediaBrowser.Controller/LiveTv/IWarmProcessProvider.cs`) allows plugins to keep FFmpeg processes alive for fast LiveTV channel zapping:
 
-- `TryGetWarmPlaylist(mediaSourceId, out playlistPath)` — called by `DynamicHlsController` before FFmpeg cold start
+- `TryGetWarmPlaylist(mediaSourceId, encodingProfile, out playlistPath)` — called by `DynamicHlsController` only when no playlist exists (i.e., FFmpeg cold start is needed)
 - `TryAdoptProcess(mediaSourceId, playlistPath, ffmpegProcess, liveStreamId)` — called by `TranscodeManager` when killing a job
 
 Registered via DI as `IEnumerable<IWarmProcessProvider>`. Multiple providers supported; first-to-adopt wins. Only applies to infinite streams (LiveTV).

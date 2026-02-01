@@ -48,6 +48,13 @@ This document reviews the current warm pool implementation across both repositor
 
 **All phases complete.** The warm pool plugin now provides end-to-end fast LiveTV channel zapping with automatic management, metrics, and administration
 
+**Bug Fix: Redundant Warm Pool Checks (Post-Phase)** ✓
+
+- Moved warm pool provider query inside the `if (!File.Exists(playlistPath))` guard in `DynamicHlsController.GetLiveHlsStream()`
+- Previously, every client poll of `live.m3u8` triggered a warm pool check + "MISS" log entry, even while FFmpeg was already running for that session
+- Now the warm pool check only runs once per session — when no playlist exists and a cold start (or warm hit) is actually needed
+- Eliminates log spam and unnecessary provider queries during active playback
+
 ---
 
 ## Core Design Goal
@@ -372,6 +379,7 @@ Based on sequential viewing patterns (user watches channels 1→2→3), pre-warm
 | `IWarmStreamProvider` interface (new) | `MediaBrowser.Controller` | Done | Done |
 | Adoption hook in `MediaSourceManager.CloseLiveStream` | `Emby.Server.Implementations` | Done | Done |
 | Warm stream check in `MediaSourceManager` | Not needed — stream sharing handles reuse | N/A | Done |
+| **Guard warm pool check behind playlist-exists** | `Jellyfin.Api` | ~2 lines moved | **Bug fix** |
 
 All server changes are thin hook interfaces. Business logic stays in the plugin.
 
