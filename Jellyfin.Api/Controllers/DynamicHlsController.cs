@@ -309,61 +309,57 @@ public class DynamicHlsController : BaseJellyfinApiController
         TranscodingJob? job = null;
         var playlistPath = Path.ChangeExtension(state.OutputFilePath, ".m3u8");
 
-        // Check warm process providers for pre-buffered LiveTV streams
-        if (state.MediaSource?.IsInfiniteStream == true)
+        if (!System.IO.File.Exists(playlistPath))
         {
-            var warmSourceId = state.MediaSource.Id;
-            var encodingProfile = new EncodingProfile(
-                state.OutputVideoCodec,
-                state.OutputAudioCodec,
-                state.OutputVideoBitrate,
-                state.OutputAudioBitrate,
-                state.OutputWidth,
-                state.OutputHeight,
-                state.OutputAudioChannels);
-
-            _logger.LogInformation(
-                "Warm pool check: media source {MediaSourceId} with profile {Profile}, querying {Count} provider(s)",
-                warmSourceId,
-                encodingProfile.ToString(),
-                _warmProcessProviders.Count());
-
-            foreach (var warmProvider in _warmProcessProviders)
+            // Check warm process providers for pre-buffered LiveTV streams (only when no active session)
+            if (state.MediaSource?.IsInfiniteStream == true)
             {
-                if (warmProvider.TryGetWarmPlaylist(warmSourceId, encodingProfile, out var warmPlaylistPath)
-                    && warmPlaylistPath is not null)
+                var warmSourceId = state.MediaSource.Id;
+                var encodingProfile = new EncodingProfile(
+                    state.OutputVideoCodec,
+                    state.OutputAudioCodec,
+                    state.OutputVideoBitrate,
+                    state.OutputAudioBitrate,
+                    state.OutputWidth,
+                    state.OutputHeight,
+                    state.OutputAudioChannels);
+
+                _logger.LogInformation(
+                    "Warm pool check: media source {MediaSourceId} with profile {Profile}, querying {Count} provider(s)",
+                    warmSourceId,
+                    encodingProfile.ToString(),
+                    _warmProcessProviders.Count());
+
+                foreach (var warmProvider in _warmProcessProviders)
                 {
-                    if (System.IO.File.Exists(warmPlaylistPath))
+                    if (warmProvider.TryGetWarmPlaylist(warmSourceId, encodingProfile, out var warmPlaylistPath)
+                        && warmPlaylistPath is not null)
                     {
-                        _logger.LogInformation(
-                            "Warm process HIT for media source {MediaSourceId} profile {Profile}, serving playlist: {Path}",
+                        if (System.IO.File.Exists(warmPlaylistPath))
+                        {
+                            _logger.LogInformation(
+                                "Warm process HIT for media source {MediaSourceId} profile {Profile}, serving playlist: {Path}",
+                                warmSourceId,
+                                encodingProfile.ToString(),
+                                warmPlaylistPath);
+                            var warmText = await System.IO.File.ReadAllTextAsync(warmPlaylistPath, cancellationToken).ConfigureAwait(false);
+                            return Content(warmText, MimeTypes.GetMimeType("playlist.m3u8"));
+                        }
+
+                        _logger.LogWarning(
+                            "Warm provider returned playlist for {MediaSourceId} profile {Profile} but file not found on disk: {Path}",
                             warmSourceId,
                             encodingProfile.ToString(),
                             warmPlaylistPath);
-                        var warmText = await System.IO.File.ReadAllTextAsync(warmPlaylistPath, cancellationToken).ConfigureAwait(false);
-                        return Content(warmText, MimeTypes.GetMimeType("playlist.m3u8"));
                     }
-
-                    _logger.LogWarning(
-                        "Warm provider returned playlist for {MediaSourceId} profile {Profile} but file not found on disk: {Path}",
-                        warmSourceId,
-                        encodingProfile.ToString(),
-                        warmPlaylistPath);
                 }
+
+                _logger.LogInformation(
+                    "Warm pool MISS for media source {MediaSourceId} profile {Profile}, proceeding with cold start",
+                    warmSourceId,
+                    encodingProfile.ToString());
             }
 
-            _logger.LogInformation(
-                "Warm pool MISS for media source {MediaSourceId} profile {Profile}, proceeding with cold start",
-                warmSourceId,
-                encodingProfile.ToString());
-        }
-        else
-        {
-            _logger.LogInformation("Warm pool check skipped: media source {SourceId} IsInfiniteStream={IsInfinite}", state.MediaSource?.Id, state.MediaSource?.IsInfiniteStream);
-        }
-
-        if (!System.IO.File.Exists(playlistPath))
-        {
             using (await _transcodeManager.LockAsync(playlistPath, cancellationToken).ConfigureAwait(false))
             {
                 if (!System.IO.File.Exists(playlistPath))
