@@ -416,7 +416,7 @@ Created in `TranscodeManager.OnTranscodeBeginning()`. Stored in `_activeTranscod
 | `CancellationTokenSource` | Used to signal FFmpeg termination |
 | `ActiveRequestCount` | Number of pending segment requests |
 
-**Note**: `TranscodingJob` does NOT currently store encoding parameters (video codec, bitrate, resolution, etc.). Only `MediaSource` and `Path` are available at adoption time in `KillTranscodingJob()`. This is a gap for encoding-parameter-aware warm pool matching.
+**Note**: `TranscodingJob` now stores an `EncodingProfile` field (added in Phase 1). The encoding profile is set in `OnTranscodeBeginning()` from `StreamState` and passed to `IWarmProcessProvider.TryAdoptProcess()` during `KillTranscodingJob()`. This ensures the plugin can key adopted entries by both channel AND encoding parameters.
 
 ### TranscodeManager
 
@@ -495,6 +495,10 @@ These paths are independent — both run regardless of the other's outcome. The 
 
 **Critical for warm pool**: When a process is adopted, `TranscodeManager` bumps `ConsumerCount` from 1 to 2. Then `SessionManager` calls `CloseLiveStream()` which decrements to 1 — still > 0, so the stream stays open. The plugin is responsible for eventually calling `CloseLiveStream()` again on eviction, which decrements to 0 and actually closes the tuner.
 
+**Session tracking for warm pool (v1.8.0)**: The `PlaybackStopped` event fires during this pipeline. `WarmPoolEntryPoint.OnPlaybackStopped` records `{mediaSourceId → sessionId}` via `WarmPoolManager.RecordRecentStop()` before adoption runs. When `TryAdoptProcess()` executes (synchronously in the same pipeline), `AdoptProcess` calls `WarmPoolManager.ConsumeRecentStop()` to tag the adopted entry with the owning session. Later, when `SessionEnded` fires (WebSocket close, app exit), the plugin marks all entries owned by that session as orphaned, making them the first to be evicted when demand arrives.
+
+**Session lifecycle events used by plugin**: `ISessionManager.PlaybackStart`, `PlaybackStopped` (viewing history + session ownership tracking), `SessionEnded` (orphan detection). The `SessionEnded` event fires when `WebSocketController.OnConnectionClosed` triggers `CloseIfNeededAsync` and no active session controllers remain.
+
 ---
 
 ## 10. Warm Pool Implementation
@@ -510,13 +514,15 @@ Eliminate FFmpeg startup delay (~5+ seconds) when changing LiveTV channels by ke
 ```csharp
 public interface IWarmProcessProvider
 {
-    bool TryGetWarmPlaylist(string mediaSourceId, out string? playlistPath);
-    bool TryAdoptProcess(string mediaSourceId, string playlistPath,
+    bool TryGetWarmPlaylist(string mediaSourceId, EncodingProfile encodingProfile, out string? playlistPath);
+    bool TryAdoptProcess(string mediaSourceId, EncodingProfile encodingProfile, string playlistPath,
                          Process ffmpegProcess, string? liveStreamId);
 }
 ```
 
-- **`TryGetWarmPlaylist`**: Called before FFmpeg cold start. Returns true + playlist path if a warm process exists for the requested media source.
+`EncodingProfile` (`MediaBrowser.Controller/LiveTv/EncodingProfile.cs`) carries: `VideoCodec`, `AudioCodec`, `VideoBitrate`, `AudioBitrate`, `Width`, `Height`, `AudioChannels`. Its `ComputeHash()` method produces a deterministic MD5 hash for pool key generation.
+
+- **`TryGetWarmPlaylist`**: Called before FFmpeg cold start. Returns true + playlist path if a warm process exists for the requested media source AND encoding profile.
 - **`TryAdoptProcess`**: Called when killing a transcoding job. Returns true if the provider takes ownership of the FFmpeg process.
 
 ### Integration Points
@@ -571,11 +577,11 @@ A warm pool plugin must:
 4. On eviction: call `IMediaSourceManager.CloseLiveStream(liveStreamId)` to release tuner
 5. Never interact with process/files after returning `false` from `TryAdoptProcess()`
 
-### Plugin Implementation Details (jellyfin-plugin-warmpool v1.3.0)
+### Plugin Implementation Details (jellyfin-plugin-warmpool v1.8.0)
 
 The plugin is at `C:\sourcecode\GitHub\jellyfin-plugin-warmpool`. Key implementation details needed for development:
 
-**Pool storage**: `ConcurrentDictionary<string, WarmProcessInfo>` keyed by `mediaSourceId`.
+**Pool storage**: `ConcurrentDictionary<string, WarmProcessInfo>` keyed by composite `{mediaSourceId}|{encodingProfileHash}`. This ensures warm hits only occur when both channel AND encoding parameters match.
 
 **MediaSourceId computation** (must match Jellyfin's `M3UTunerHost` logic):
 
@@ -606,7 +612,8 @@ Key: `-codec copy` means remux only (no transcoding). `-hls_list_size 5` keeps a
 | Field | Purpose |
 | --- | --- |
 | `ChannelId` | Human-readable name (for logging) |
-| `MediaSourceId` | Pool lookup key (MD5 of stream URL) |
+| `MediaSourceId` | Channel identity (MD5 of stream URL) |
+| `EncodingProfileHash` | MD5 of codec/bitrate/resolution — used with MediaSourceId as composite pool key |
 | `FFmpegProcess` | Running `Process` handle |
 | `PlaylistPath` | Path to .m3u8 file on disk |
 | `SegmentPrefix` | Filename prefix for segment files |
@@ -615,9 +622,12 @@ Key: `-codec copy` means remux only (no transcoding). `-hls_list_size 5` keeps a
 | `CreatedTime` | When process was started |
 | `LastAccessTime` | Last warm hit timestamp |
 | `ConsumerCount` | Number of active clients reading segments |
+| `OwnerSessionId` | Session ID of the user who caused adoption (for session-aware eviction) |
+| `OwnerDeviceId` | Device ID of the owning session |
+| `IsOrphaned` | True when owning session has ended — heavily penalized in eviction scoring |
 | `IsRunning` | `Process != null && !Process.HasExited` |
 
-**Singleton pattern**: `WarmPoolManager` uses double-checked locking to ensure one pool instance per Jellyfin process. The pool is lazily created on first `TryGetWarmPlaylist()` or `TryAdoptProcess()` call via `WarmProcessProvider.EnsurePool()`.
+**Singleton pattern**: `WarmPoolManager` uses double-checked locking to ensure one pool instance per Jellyfin process. The pool is lazily created on first `TryGetWarmPlaylist()` or `TryAdoptProcess()` call via `WarmProcessProvider.EnsurePool()`. `WarmPoolManager` also hosts a transient `ConcurrentDictionary<mediaSourceId, SessionOwnerInfo>` for threading session ownership through the adoption pipeline (populated by `WarmPoolEntryPoint.OnPlaybackStopped`, consumed by `AdoptProcess`).
 
 **Eviction cleanup** (`StopWarmProcessAsync`):
 
@@ -705,7 +715,9 @@ private readonly AsyncNonKeyedLocker _liveStreamLocker = new(1);
 |------|---------------|---------|
 | `MediaBrowser.Controller/LiveTv/ITunerHost.cs` | `ITunerHost` | Tuner host contract |
 | `MediaBrowser.Controller/LiveTv/ILiveTvService.cs` | `ILiveTvService` | LiveTV backend provider contract |
-| `MediaBrowser.Controller/LiveTv/IWarmProcessProvider.cs` | `IWarmProcessProvider` | Warm pool plugin contract |
+| `MediaBrowser.Controller/LiveTv/IWarmProcessProvider.cs` | `IWarmProcessProvider` | Warm FFmpeg process pool plugin contract |
+| `MediaBrowser.Controller/LiveTv/IWarmStreamProvider.cs` | `IWarmStreamProvider` | Warm direct stream pool plugin contract |
+| `MediaBrowser.Controller/LiveTv/EncodingProfile.cs` | `EncodingProfile` | Encoding parameters for pool key matching |
 | `MediaBrowser.Controller/Library/ILiveStream.cs` | `ILiveStream` | Live stream contract |
 | `MediaBrowser.Controller/Library/IMediaSourceManager.cs` | `IMediaSourceManager` | Media source management contract |
 
@@ -744,11 +756,11 @@ The warm pool implementation on `feature/fastchannelzapping` addresses FFmpeg st
 2. Checking the plugin for cached playlists on playback start
 3. Using ConsumerCount bumping to keep tuner connections alive
 
-### Encoding Parameter Matching
+### Encoding Parameter Matching (Implemented — Phase 1)
 
 Different clients may request different transcoding parameters for the same channel (e.g., H.264 vs H.265, 1080p vs 720p, different bitrates). A warm pool FFmpeg process can only serve a client whose requested encoding parameters match what FFmpeg is already producing.
 
-Currently, the warm pool is keyed only by `mediaSourceId` (channel identity). It does not consider encoding parameters. This needs to be extended so the pool key includes the encoding profile (video codec, audio codec, resolution, bitrate).
+The warm pool key is now a composite `{mediaSourceId}|{encodingProfileHash}`, where the encoding profile hash incorporates video codec, audio codec, video bitrate, audio bitrate, width, height, and audio channels. This allows multiple warm entries per channel (one per encoding profile) and prevents mismatched warm hits.
 
 ### Multiple Clients on Same Channel
 
@@ -765,11 +777,17 @@ When multiple clients request the same channel with the same encoding parameters
 - **Same channel re-tune with matching encoding params**: Near-instant because warm playlist and segments already exist on disk
 - **TVHeadend connection**: Stays alive because FFmpeg continues to consume from it
 
-### What the Warm Pool Does NOT Currently Handle
+### What the Warm Pool Handles (as of v1.8.0)
 
-- **Direct streaming (no FFmpeg)**: The warm pool only operates on transcoding jobs. If a stream is direct play without FFmpeg, there's no process to warm-pool. A future `IWarmStreamProvider` interface could keep `SharedHttpStream` connections alive for this case.
-- **Different channel tune**: A new channel requires a new FFmpeg process and IPTV connection.
-- **Mismatched encoding parameters**: A warm entry for H.264 1080p cannot serve a client requesting H.265 720p.
+- **FFmpeg process pool** (`IWarmProcessProvider`): Keeps FFmpeg processes alive for remux/transcode scenarios. Keyed by channel + encoding profile.
+- **Direct stream pool** (`IWarmStreamProvider`, Phase 3): Keeps `ILiveStream` connections (e.g., `SharedHttpStream` to TVHeadend) alive for direct streaming scenarios. Adopted in `MediaSourceManager.CloseLiveStream()` when `ConsumerCount` reaches 0.
+- **Session-aware eviction** (Phase 6): Tracks which session owns each pool entry. Orphaned entries (session ended) are heavily penalized in eviction scoring. Per-user fairness prevents pool monopolization.
+- **Viewing history + prediction** (Phase 4): Tracks per-user viewing patterns, predicts next channel, protects predicted channels from eviction.
+
+### What the Warm Pool Does NOT Handle
+
+- **Different channel tune**: A new channel requires a new FFmpeg process and IPTV connection. Only previously-watched channels can get warm hits.
+- **Mismatched encoding parameters**: A warm entry for H.264 1080p cannot serve a client requesting H.265 720p. The composite pool key prevents this.
 
 ### Key Timing Breakdown
 
@@ -783,13 +801,14 @@ When multiple clients request the same channel with the same encoding parameters
 
 ### Architecture Implications
 
-1. **Plugin-based design** is correct — keeps warm pool logic out of Jellyfin core, server provides only thin hook interfaces
+1. **Plugin-based design** is correct — keeps warm pool logic out of Jellyfin core, server provides only thin hook interfaces (`IWarmProcessProvider`, `IWarmStreamProvider`)
 2. **FFmpeg is the key resource** — the warm pool fundamentally keeps FFmpeg alive on the mpegts stream; the TVHeadend connection is a side effect of this
-3. **Encoding parameter matching** is critical — warm hits must only occur when channel AND transcoding profile match
+3. **Encoding parameter matching** is implemented — composite key `{mediaSourceId}|{encodingProfileHash}` ensures warm hits only occur when channel AND transcoding profile match
 4. **ConsumerCount pattern** is essential for preventing premature stream/tuner closure
 5. **Pool size** limits resource consumption — each warm process uses CPU, memory, bandwidth, and a tuner slot
 6. **Multiple warm pool providers** are supported (first-to-adopt wins), allowing different strategies
-7. **Direct streaming optimization** (Phase 3) would require changes to `SharedHttpStream` and `MediaSourceManager`, not `TranscodeManager`
+7. **Direct streaming optimization** (Phase 3) is implemented via `IWarmStreamProvider` — keeps `ILiveStream` connections alive in `MediaSourceManager`
+8. **Session awareness** (Phase 6) — pool entries track their owning session; orphaned entries are preferentially evicted; per-user fairness prevents any single user from monopolizing pool slots
 
 ---
 

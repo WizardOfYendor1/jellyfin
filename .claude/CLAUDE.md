@@ -2,6 +2,10 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Standing Permissions
+
+- **Documentation updates**: Claude has permission to update all `.md` files in `.claude/` (CLAUDE.md, LiveTV-Architecture.md, WarmPool-ChangePlan.md, DesignAndInstructions.MD, etc.) without asking for confirmation. No approval needed for any `.md` file edits.
+
 ## Project Overview
 
 Jellyfin is a free software media system — a fork of Emby 3.5.2. This repository contains the **server backend** written in C# targeting .NET 10.0. The web client is in a separate `jellyfin-web` repository.
@@ -126,17 +130,26 @@ Registered via DI as `IEnumerable<IWarmProcessProvider>`. Multiple providers sup
 
 The warm pool **plugin** implements `IWarmProcessProvider` and lives in a separate repository. It is the preferred approach — keeping warm pool logic in a plugin rather than modifying Jellyfin core/server code. The server only provides minimal hook interfaces.
 
-### Plugin Structure (~600 lines C#)
+### Plugin Structure
 
 | File | Purpose |
-|------|---------|
-| `Plugin.cs` | Entry point, extends `BasePlugin<PluginConfiguration>` |
-| `PluginServiceRegistrator.cs` | DI registration: `IWarmProcessProvider` → `WarmProcessProvider` |
-| `PluginConfiguration.cs` | Config: `Enabled`, `PoolSize` (default 3), `IdleTimeoutMinutes`, `FFmpegPath` |
-| `WarmProcessProvider.cs` | Bridge implementing `IWarmProcessProvider`, delegates to pool |
-| `WarmFFmpegProcessPool.cs` | Core pool logic: adoption, lookup, eviction, cleanup (386 lines) |
-| `WarmProcessInfo.cs` | Metadata per warm process (process handle, playlist path, liveStreamId) |
-| `WarmPoolController.cs` | REST API: `POST /WarmPool/Start`, `POST /WarmPool/Stop`, `GET /WarmPool/Status` |
+| ---- | ------- |
+| `Plugin.cs` | Entry point, extends `BasePlugin<PluginConfiguration>`, implements `IHasWebPages` for admin UI |
+| `PluginServiceRegistrator.cs` | DI registration: `IWarmProcessProvider`, `IWarmStreamProvider`, `WarmPoolEntryPoint` hosted service |
+| `PluginConfiguration.cs` | Config: `Enabled`, `PoolSize` (default 3), `IdleTimeoutMinutes`, `MaxDiskUsageMB`, `FFmpegPath` |
+| `WarmProcessProvider.cs` | Bridge implementing `IWarmProcessProvider`, delegates to `WarmFFmpegProcessPool` |
+| `WarmStreamProvider.cs` | Bridge implementing `IWarmStreamProvider`, delegates to `WarmStreamPool` |
+| `WarmFFmpegProcessPool.cs` | Core FFmpeg process pool: adoption, lookup, session-aware eviction, idle cleanup |
+| `WarmStreamPool.cs` | Direct stream pool: adopts `ILiveStream` connections, session-aware eviction |
+| `WarmProcessInfo.cs` | Metadata per warm process (process, playlist, liveStreamId, session ownership, orphan flag) |
+| `WarmStreamInfo.cs` | Metadata per warm stream (liveStream, liveStreamId, session ownership, orphan flag) |
+| `WarmPoolEntryPoint.cs` | `IHostedService` subscribing to `PlaybackStart`, `PlaybackStopped`, `SessionEnded` events |
+| `WarmPoolManager.cs` | Singleton manager for all pool components + session ownership lookup (`RecordRecentStop`/`ConsumeRecentStop`) |
+| `ViewingHistory.cs` | Per-user viewing history tracking, sequential pattern detection, next-channel prediction |
+| `PoolMetrics.cs` | Thread-safe counters: hits/misses, adoptions, evictions (idle/LRU/dead) |
+| `DiskSpaceMonitor.cs` | Disk usage calculation and budget enforcement |
+| `WarmPoolController.cs` | REST API: `/WarmPool/Start`, `/Stop`, `/Status`, `/DetailedStatus`, `/Metrics`, `/History` |
+| `Configuration/config.html` | Embedded admin UI: config editor, live pool status, metrics, viewing history |
 
 ### Plugin Build
 
@@ -181,7 +194,7 @@ docker restart jellyfin
 
 **Verification**:
 - Check Jellyfin logs after restart: `docker logs jellyfin`
-- Look for: `[PluginManager] Loaded plugin: Warm FFmpeg Process Pool 1.6.0`
+- Look for: `[PluginManager] Loaded plugin: Warm FFmpeg Process Pool 1.8.0`
 - Access plugin settings in Jellyfin web UI: Dashboard → Plugins → Warm FFmpeg Process Pool
 
 ### Plugin Version Management
@@ -221,10 +234,13 @@ Always verify the build succeeds before committing to avoid pushing broken code.
 ### Key Plugin Design
 
 - **MediaSourceId matching**: `MD5(streamUrl)` using `Encoding.Unicode` (UTF-16LE) to match Jellyfin's `M3UTunerHost` channel ID computation
-- **Adoption**: On playback stop, adopts FFmpeg process + stores `liveStreamId` for tuner cleanup
-- **Eviction**: Kills FFmpeg, deletes segments, calls `IMediaSourceManager.CloseLiveStream(liveStreamId)`
+- **Pool key**: Composite `{mediaSourceId}|{encodingProfileHash}` — warm hits only occur when both channel AND encoding parameters match
+- **Adoption**: On playback stop, `TranscodeManager` offers FFmpeg process to `IWarmProcessProvider`. Plugin adopts it, stores `liveStreamId` for tuner cleanup, and tags it with the owning session ID
+- **Eviction scoring**: `score = historyPriority - (idleMinutes / 60.0) + orphanPenalty + fairnessPenalty`. Four eviction types: history-aware LRU (pool full), idle timeout (10 min default), dead process cleanup, disk space
+- **Session-aware eviction** (v1.8.0): Each pool entry tracks `OwnerSessionId` and `IsOrphaned`. When a user's session ends (`SessionEnded` event from WebSocket close / app exit), their entries are marked orphaned (`-10.0` penalty). Per-user fairness penalty (`-ownerSlots/totalSlots`) prevents any single user from monopolizing the pool. Orphaned entries remain available if no demand exists (lazy eviction)
+- **Session info pipeline**: `WarmPoolEntryPoint.OnPlaybackStopped` records `{mediaSourceId → sessionId}` via `WarmPoolManager.RecordRecentStop()`. During adoption (same pipeline), the pool calls `ConsumeRecentStop()` to tag the entry. No server interface changes needed
 - **Pool size**: Configurable max warm processes (default 3)
-- **Current version**: 1.6.0 (automatic adoption + encoding profile API parameters + fixed checkbox bug)
+- **Current version**: 1.8.0
 
 ### Warm Pool Population: Automatic vs Manual
 
@@ -249,9 +265,9 @@ Always verify the build succeeds before committing to avoid pushing broken code.
 2. Verify encoding profiles match between warm pool entries and client requests
 3. For clients requesting transcoding (h264/aac), manually started processes with "copy/copy" codec won't match
 
-### Known Gap: Encoding Parameter Matching
+### Encoding Parameter Matching (Completed — Phase 1)
 
-The current `IWarmProcessProvider` interface passes only `mediaSourceId` (channel identity). It does NOT pass encoding parameters (video codec, resolution, bitrate). Different clients may request different transcoding profiles for the same channel. The interface needs to be extended to include encoding parameters so warm hits only occur when both channel AND profile match. See `WarmPool-ChangePlan.md` Phase 1 for the plan.
+The `IWarmProcessProvider` interface passes both `mediaSourceId` (channel identity) and `EncodingProfile` (video codec, audio codec, bitrate, resolution). The pool key is `{mediaSourceId}|{encodingProfileHash}`, ensuring warm hits only occur when both channel AND transcoding profile match. Different clients requesting different profiles get separate pool entries.
 
 ## Detailed Documentation
 

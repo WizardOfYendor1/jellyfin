@@ -433,4 +433,167 @@ All server changes are thin hook interfaces. Business logic stays in the plugin.
 
 ---
 
+## Phase 6: Session-Aware Eviction — COMPLETED ✓
+
+### Problem Statement
+
+The warm pool is entirely global with no concept of which user or session owns each entry. `WarmProcessInfo` stores no `SessionId`, `DeviceId`, or `UserId`. This causes two problems:
+
+### Scenario 1: Multi-User Pool Fairness
+
+**Setup**: Pool size 4. User A flips through channels for 10 minutes, filling slots A1-A4. User B then connects and starts flipping channels.
+
+**Current behavior**: When User B tunes a channel, adoption triggers `EvictLeastValuableProcess`. The eviction score (`historyPriority - idleMinutes/60.0`) is purely based on viewing history frequency and recency. There is no concept of "User A holds 4 slots, User B holds 0."
+
+**Problem**: User A's entries accumulate higher `historyPriority` from repeated flipping, making them harder to evict. User B's entries get adopted (displacing User A's oldest), but User B's new entries are immediately vulnerable because they have low history priority. A power user who flips rapidly can effectively monopolize the pool.
+
+**Desired behavior**: When the pool is full, eviction should consider per-user/per-session slot counts. A user holding 3 of 4 slots should have entries evicted before a user holding 1 of 4 slots (all else being equal). This ensures each active user gets a fair share of the pool.
+
+### Scenario 2: Expedited Eviction When User Leaves
+
+**Setup**: User A stops watching LiveTV entirely (turns off TV). Their channels remain in the pool. User C then connects and needs a slot.
+
+**Current behavior**: The plugin subscribes to `PlaybackStart` and `PlaybackStopped` but **does NOT subscribe to `SessionEnded`**. When User A's WebSocket closes (TV off), the server fires `SessionEnded` via `WebSocketController.OnConnectionClosed` → `SessionManager.CloseIfNeededAsync` → `OnSessionEnded`. But the plugin never receives this signal.
+
+User A's warm entries sit in the pool with frozen `LastAccessTime`, waiting for either:
+
+- The 10-minute idle timeout (checked every 60s), OR
+- LRU eviction triggered by someone else needing a slot
+
+**Problem**: There is no expedited eviction. User A's entries are treated identically to entries from active users. If User C connects and needs a slot, the eviction score doesn't know User A is gone -- it just uses the generic `historyPriority - idleMinutes/60.0` formula.
+
+**Desired behavior**: When a user's session ends, their pool entries should be deprioritized (not immediately evicted -- there's no need to evict if no one else needs the slot). But when demand arrives, orphaned entries should be the first to go, regardless of their history priority.
+
+### Server Events Available (Research Findings)
+
+The `ISessionManager` interface (`MediaBrowser.Controller/Session/ISessionManager.cs`) already exposes the needed events:
+
+| Event | Trigger | Data Available |
+| ----- | ------- | -------------- |
+| `PlaybackStart` | Client starts playing | `PlaybackProgressEventArgs`: `Session`, `MediaSourceId`, `DeviceId`, `Users`, `PlaySessionId` |
+| `PlaybackStopped` | Client stops a stream | `PlaybackStopEventArgs`: same as above + `PlayedToCompletion` |
+| `SessionEnded` | Client fully disconnects | `SessionEventArgs`: `SessionInfo` (includes `Id`, `DeviceId`, `UserId`, `Client`, `DeviceName`) |
+| `SessionActivity` | Every ~10s while connected | `SessionEventArgs`: `SessionInfo` |
+
+**`SessionEnded` trigger paths** (traced through code):
+
+1. **WebSocket close** (most common "turn off TV" case):
+   - `WebSocketController.OnConnectionClosed` (`Emby.Server.Implementations/Session/WebSocketController.cs:78`)
+   - → Removes socket from list, calls `_sessionManager.CloseIfNeededAsync(_session)`
+   - → `CloseIfNeededAsync` checks `session.SessionControllers.Any(i => i.IsSessionActive)` (`SessionManager.cs:310`)
+   - → If no active controllers → removes from `_activeConnections` → fires `OnSessionEnded` → raises `SessionEnded` event
+   - → Also calls `CloseLiveStreamIfNeededAsync` if session had an active live stream
+
+2. **API call**: `SessionController.ReportSessionEnded` (`Jellyfin.Api/Controllers/SessionController.cs:422`) → `ReportSessionEnded` → `OnSessionEnded`
+
+3. **Logout/token revocation**: `Logout` iterates sessions for that device → `ReportSessionEnded` → `OnSessionEnded`
+
+**Important nuances**:
+
+- **Navigating away from LiveTV** (e.g., browsing movie library): Only `PlaybackStopped` fires. Session stays alive. `SessionEnded` does NOT fire.
+- **App backgrounded / TV input switched**: Depends on client behavior. Most clients keep the WebSocket alive for a while. Eventually timeout or OS kill → WebSocket close → `SessionEnded`.
+- **Idle playback detection** (5 min no check-in): `SessionManager.CheckForIdlePlayback` fires synthetic `PlaybackStopped` only -- NOT `SessionEnded`. Session stays in `_activeConnections`.
+- **Inactive session threshold** (paused too long): Sends a stop command, which triggers `PlaybackStopped`. Session stays alive.
+
+### Plugin Event Subscriptions (after v1.8.0)
+
+`WarmPoolEntryPoint.cs` subscribes to:
+
+- `PlaybackStart` → records viewing history, tracks user+channel
+- `PlaybackStopped` → records viewing history, triggers predictive channel boosting, records session→mediaSourceId mapping for adoption tagging
+- `SessionEnded` → marks all pool entries owned by the ended session as orphaned
+
+**NOT subscribed to**: `SessionActivity`, `SessionStarted`
+
+### Implementation (Plugin-Only, v1.8.0)
+
+All changes are in the plugin. No server modifications needed.
+
+#### 6a. Track Session Ownership
+
+Add session metadata to `WarmProcessInfo`:
+
+```csharp
+/// Gets or sets the session ID of the user who caused this process to be adopted.
+public string? OwnerSessionId { get; set; }
+
+/// Gets or sets the device ID of the owning session.
+public string? OwnerDeviceId { get; set; }
+
+/// Gets or sets whether the owning session has ended (user disconnected).
+public bool IsOrphaned { get; set; }
+```
+
+**Threading session info to `AdoptProcess()`**: The `IWarmProcessProvider.TryAdoptProcess()` interface does not carry session info. Options:
+
+- **Option A**: Extend `IWarmProcessProvider` interface to include session ID (requires server change -- violates plugin-first principle)
+- **Option B (recommended)**: In `WarmPoolEntryPoint.OnPlaybackStopped`, store `{mediaSourceId → sessionId}` in a short-lived lookup. `WarmProcessProvider.TryAdoptProcess` reads from this lookup to tag the adopted entry. The adoption happens synchronously during the same `PlaybackStopped` processing pipeline, so timing is reliable.
+- **Option C**: After adoption, use a post-adoption hook to tag the entry based on recent `PlaybackStopped` events.
+
+#### 6b. Subscribe to SessionEnded
+
+In `WarmPoolEntryPoint.StartAsync()`, add:
+
+```csharp
+_sessionManager.SessionEnded += OnSessionEnded;
+```
+
+Handler marks all entries owned by that session as orphaned:
+
+```csharp
+private void OnSessionEnded(object? sender, SessionEventArgs e)
+{
+    var sessionId = e.SessionInfo.Id;
+    _pool.MarkSessionOrphaned(sessionId);
+    _logger.LogInformation(
+        "[WarmPoolEntryPoint] Session {SessionId} ended (device: {Device}), marking pool entries as orphaned",
+        sessionId, e.SessionInfo.DeviceName);
+}
+```
+
+#### 6c. Modify Eviction Scoring
+
+Update `EvictLeastValuableProcess` to incorporate session awareness:
+
+```text
+Current score:
+  score = historyPriority - (idleMinutes / 60.0)
+
+New score with session awareness:
+  orphanPenalty    = process.IsOrphaned ? -10.0 : 0.0
+  fairnessPenalty  = -(ownerSlotCount / totalSlots)
+  score = historyPriority - (idleMinutes / 60.0) + orphanPenalty + fairnessPenalty
+```
+
+Effects:
+
+- **Scenario 1 (fairness)**: `fairnessPenalty` makes entries from users holding disproportionate pool shares more evictable. User A with 3/4 slots gets penalty -0.75; User B with 1/4 gets -0.25.
+- **Scenario 2 (expedited eviction)**: `orphanPenalty` of -10.0 makes orphaned entries drastically more evictable than any active-session entry, ensuring they're the first to go when demand arrives. But they remain in the pool if nobody needs the slot (eviction only happens when pool is full during adoption).
+
+#### 6d. Grace Period for Channel Changes (Optional Refinement)
+
+When `PlaybackStopped` fires, it could be a channel change (stop old → start new) or a true exit. To avoid prematurely orphaning during rapid channel flipping:
+
+- On `PlaybackStopped`: Record timestamp for that session
+- On `PlaybackStart` (same session within ~5s): Cancel -- it was a channel change
+- Timer expires (no new `PlaybackStart`): User stopped watching LiveTV but session is still active. Could apply a mild priority reduction (less than full orphan penalty).
+
+This is refinement, not essential for the core feature. The orphan flag from `SessionEnded` is the primary mechanism.
+
+### Plugin Changes Summary (Phase 6)
+
+| Change | File | Impact |
+| ------ | ---- | ------ |
+| Add `OwnerSessionId`, `OwnerDeviceId`, `IsOrphaned` | `WarmProcessInfo.cs` | 3 properties |
+| Track session→mediaSourceId mapping on stop | `WarmPoolEntryPoint.cs` | ~15 lines |
+| Subscribe to `SessionEnded`, mark orphans | `WarmPoolEntryPoint.cs` | ~20 lines |
+| `MarkSessionOrphaned()` method | `WarmFFmpegProcessPool.cs` | ~10 lines |
+| Session-aware eviction scoring | `WarmFFmpegProcessPool.cs` | ~10 lines in `EvictLeastValuableProcess` |
+| Per-user slot counting in eviction | `WarmFFmpegProcessPool.cs` | ~10 lines |
+| Apply same changes to stream pool | `WarmStreamPool.cs`, `WarmStreamInfo.cs` | Mirror of above |
+
+**Server changes needed**: None. All data is available through existing `ISessionManager` events.
+
+---
+
 *This plan should be updated as implementation progresses and new findings emerge.*
