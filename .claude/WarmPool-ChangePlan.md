@@ -30,7 +30,23 @@ This document reviews the current warm pool implementation across both repositor
 - **3d: Plugin WarmStreamPool** — Created `WarmStreamInfo.cs`, `WarmStreamPool.cs`, and `WarmStreamProvider.cs` in the plugin. Pool features: idle timeout eviction (60s timer, configurable `IdleTimeoutMinutes`), LRU eviction on pool full, re-adoption prevention via `_evictingStreamIds` set during eviction-triggered `CloseLiveStream` callbacks. Registered `IWarmStreamProvider` in `PluginServiceRegistrator`. Updated `WarmPoolManager` to manage both process and stream pool singletons.
 - All changes compile successfully with 0 errors, 0 warnings (server + plugin)
 
-**Next**: Phase 4 (Automatic Pool Management) - auto-warm via adoption, viewing history, predictive pre-warming
+**Phase 4 (Automatic Pool Management) - COMPLETED** ✓
+
+- **4a: Auto-Warm via Adoption** — Already functional from Phase 1-3. Automatic adoption from TranscodeManager handles the common case: user watches channel, tunes away, FFmpeg adopted, user tunes back, warm hit.
+- **4b: Viewing History Tracking** — Created `ViewingHistory.cs` that subscribes to `ISessionManager.PlaybackStart` and `PlaybackStopped` events via `WarmPoolEntryPoint` (`IHostedService`). Tracks per-user recent channel lists, global channel frequency, and sequential transition patterns (A→B). Data persisted to plugin data folder as JSON across server restarts.
+- **4c: Predictive Pre-Warming** — Implemented via viewing history pattern detection. `PredictNextChannel()` identifies the most likely next channel from sequential patterns (minimum 2 occurrences). When playback stops, `WarmPoolEntryPoint` boosts the priority of predicted-next channels in both process and stream pools by updating `LastAccessTime`, preventing them from being evicted by LRU or idle timeout.
+- **Smart Eviction** — LRU eviction now uses a composite score: `historyPriority - (idleMinutes / 60.0)`. Channels with higher historical view frequency are protected from eviction. This applies to both `WarmFFmpegProcessPool` and `WarmStreamPool`.
+- All changes compile successfully with 0 errors, 0 warnings
+
+**Phase 5 (Production Hardening) - COMPLETED** ✓
+
+- **Health checks** — Enhanced dead process detection in the idle timer (already from Phase 2). `WarmFFmpegProcessPool.CheckIdleProcessesAsync()` detects crashed FFmpeg processes, cleans up segment files, and closes live streams. Runs every 60 seconds.
+- **Disk space monitoring** — Created `DiskSpaceMonitor.cs` that calculates total warm pool segment disk usage. New `MaxDiskUsageMB` configuration option (default: unlimited). Enforced during adoption (decline if over budget), manual starts (evict oldest first), and periodic health checks (evict oldest when over budget). Reports formatted disk usage in status API.
+- **Metrics** — Created `PoolMetrics.cs` with thread-safe `Interlocked` counters: warm hits/misses (process + stream), adoptions/declinations, idle/LRU/dead evictions, manual starts. Computes hit rates for both pools. Integrated into `WarmFFmpegProcessPool`, `WarmStreamPool`, and exposed via `GET /WarmPool/Metrics` API.
+- **Admin UI** — Implemented `IHasWebPages` on `Plugin.cs` with embedded HTML config page (`Configuration/config.html`). Dashboard shows: pool configuration editor (save/load), live pool status (process count, stream count, disk usage), performance metrics (hit rates, adoption counts, eviction breakdowns), and viewing history summary (top channels, transition patterns, predicted next channels). REST API expanded with `GET /WarmPool/DetailedStatus`, `GET /WarmPool/Metrics`, `GET /WarmPool/History`, `GET /WarmPool/History/User/{userId}`.
+- All changes compile successfully with 0 errors, 0 warnings (server + plugin)
+
+**All phases complete.** The warm pool plugin now provides end-to-end fast LiveTV channel zapping with automatic management, metrics, and administration
 
 ---
 
@@ -369,9 +385,14 @@ All server changes are thin hook interfaces. Business logic stays in the plugin.
 | Simplify consumer counting | `WarmFFmpegProcessPool.cs` | Done |
 | Implement `IWarmStreamProvider` | `WarmStreamProvider.cs` (new) | Done |
 | Warm stream pool | `WarmStreamPool.cs`, `WarmStreamInfo.cs` (new) | Done |
-| Viewing history tracking | New files | Phase 4b |
-| Predictive pre-warming | New files | Phase 4c |
-| Health checks / metrics / UI | New files | Phase 5 |
+| Viewing history tracking | `ViewingHistory.cs`, `WarmPoolEntryPoint.cs` (new) | Done |
+| Predictive pre-warming (priority boost) | `WarmPoolEntryPoint.cs`, `WarmFFmpegProcessPool.cs`, `WarmStreamPool.cs` | Done |
+| Smart eviction (history-aware LRU) | `WarmFFmpegProcessPool.cs`, `WarmStreamPool.cs` | Done |
+| Performance metrics | `PoolMetrics.cs` (new) | Done |
+| Disk space monitoring | `DiskSpaceMonitor.cs` (new), `PluginConfiguration.cs` | Done |
+| Admin UI + REST API expansion | `Plugin.cs`, `Configuration/config.html` (new), `WarmPoolController.cs` | Done |
+| Singleton management | `WarmPoolManager.cs` | Done |
+| DI registration | `PluginServiceRegistrator.cs` | Done |
 
 ---
 
