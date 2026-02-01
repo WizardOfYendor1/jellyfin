@@ -217,7 +217,7 @@ GET /Videos/{itemId}/hls1/{playlistId}/{segmentId}.ts?mediaSourceId=...&liveStre
   ← Binary TS segment data
 ```
 
-**Alternative flow**: Some clients use `GET /Videos/{itemId}/live.m3u8` instead of the master/main/segment flow. This endpoint starts FFmpeg immediately and returns the playlist directly. **The warm pool check currently lives in this `GetLiveHlsStream()` method.**
+**Alternative flow**: Some clients use `GET /Videos/{itemId}/live.m3u8` instead of the master/main/segment flow. This endpoint starts FFmpeg immediately and returns the playlist directly. **The warm pool check lives in this `GetLiveHlsStream()` method**, guarded so it only runs when the playlist file does not yet exist (i.e., no FFmpeg is already running for the session). Subsequent client polls of `live.m3u8` skip the warm pool check entirely.
 
 ### Step 6-7: Playback Reporting
 
@@ -523,14 +523,17 @@ public interface IWarmProcessProvider
 
 #### DynamicHlsController (check on play)
 
-In `GetLiveHlsStream()`, before starting FFmpeg:
+In `GetLiveHlsStream()`, the warm pool check is **guarded by the playlist-exists check** — it only runs when no FFmpeg is already active for this session. This prevents redundant warm pool queries on every client poll of `live.m3u8`:
 
 ```
-1. Check if media source is infinite stream (LiveTV)
-2. For each IWarmProcessProvider:
-   → TryGetWarmPlaylist(mediaSourceId, out playlistPath)
-   → If HIT and file exists: return cached playlist immediately
-   → If MISS: proceed to cold start FFmpeg
+1. If playlist file already exists (FFmpeg running): skip warm pool check, return playlist
+2. If playlist file does NOT exist (cold start needed):
+   a. Check if media source is infinite stream (LiveTV)
+   b. For each IWarmProcessProvider:
+      → TryGetWarmPlaylist(mediaSourceId, encodingProfile, out playlistPath)
+      → If HIT and file exists: return cached playlist immediately
+      → If MISS: proceed to cold start FFmpeg
+   c. Acquire transcode lock, start FFmpeg
 ```
 
 #### TranscodeManager (offer on stop)
@@ -645,6 +648,7 @@ private readonly AsyncNonKeyedLocker _liveStreamLocker = new(1);
 | `c2b1c68d4` | Fix warm pool logging: one-time registration log, promote check/miss to Information |
 | `4882d6f78` | Add automatic warm pool adoption in `TranscodeManager.KillTranscodingJob()` |
 | `fbbed4e80` | Add `liveStreamId` parameter, implement ConsumerCount bump to prevent premature stream close |
+| `0f0c0013a` | Fix warm pool check running on every `live.m3u8` poll — move check inside playlist-exists guard |
 
 ---
 
