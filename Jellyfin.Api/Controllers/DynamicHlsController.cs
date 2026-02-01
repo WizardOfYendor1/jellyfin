@@ -313,24 +313,49 @@ public class DynamicHlsController : BaseJellyfinApiController
         if (state.MediaSource?.IsInfiniteStream == true)
         {
             var warmSourceId = state.MediaSource.Id;
-            _logger.LogInformation("Warm pool check: media source {MediaSourceId} is infinite stream, querying {Count} provider(s)", warmSourceId, _warmProcessProviders.Count());
+            var encodingProfile = new EncodingProfile(
+                state.OutputVideoCodec,
+                state.OutputAudioCodec,
+                state.OutputVideoBitrate,
+                state.OutputAudioBitrate,
+                state.OutputWidth,
+                state.OutputHeight,
+                state.OutputAudioChannels);
+
+            _logger.LogInformation(
+                "Warm pool check: media source {MediaSourceId} with profile {Profile}, querying {Count} provider(s)",
+                warmSourceId,
+                encodingProfile.ToString(),
+                _warmProcessProviders.Count());
+
             foreach (var warmProvider in _warmProcessProviders)
             {
-                if (warmProvider.TryGetWarmPlaylist(warmSourceId, out var warmPlaylistPath)
+                if (warmProvider.TryGetWarmPlaylist(warmSourceId, encodingProfile, out var warmPlaylistPath)
                     && warmPlaylistPath is not null)
                 {
                     if (System.IO.File.Exists(warmPlaylistPath))
                     {
-                        _logger.LogInformation("Warm process HIT for media source {MediaSourceId}, serving playlist: {Path}", warmSourceId, warmPlaylistPath);
+                        _logger.LogInformation(
+                            "Warm process HIT for media source {MediaSourceId} profile {Profile}, serving playlist: {Path}",
+                            warmSourceId,
+                            encodingProfile.ToString(),
+                            warmPlaylistPath);
                         var warmText = await System.IO.File.ReadAllTextAsync(warmPlaylistPath, cancellationToken).ConfigureAwait(false);
                         return Content(warmText, MimeTypes.GetMimeType("playlist.m3u8"));
                     }
 
-                    _logger.LogWarning("Warm provider returned playlist for {MediaSourceId} but file not found on disk: {Path}", warmSourceId, warmPlaylistPath);
+                    _logger.LogWarning(
+                        "Warm provider returned playlist for {MediaSourceId} profile {Profile} but file not found on disk: {Path}",
+                        warmSourceId,
+                        encodingProfile.ToString(),
+                        warmPlaylistPath);
                 }
             }
 
-            _logger.LogInformation("Warm pool MISS for media source {MediaSourceId}, proceeding with cold start", warmSourceId);
+            _logger.LogInformation(
+                "Warm pool MISS for media source {MediaSourceId} profile {Profile}, proceeding with cold start",
+                warmSourceId,
+                encodingProfile.ToString());
         }
         else
         {

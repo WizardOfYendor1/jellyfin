@@ -238,18 +238,21 @@ public sealed class TranscodeManager : ITranscodeManager, IDisposable
             && job.Process is not null
             && !job.HasExited
             && !string.IsNullOrWhiteSpace(job.MediaSource.Id)
-            && !string.IsNullOrWhiteSpace(job.Path))
+            && !string.IsNullOrWhiteSpace(job.Path)
+            && job.EncodingProfile is not null)
         {
             var mediaSourceId = job.MediaSource.Id;
             var playlistPath = job.Path;
+            var encodingProfile = job.EncodingProfile;
 
             foreach (var provider in _warmProcessProviders)
             {
-                if (provider.TryAdoptProcess(mediaSourceId, playlistPath, job.Process, job.LiveStreamId))
+                if (provider.TryAdoptProcess(mediaSourceId, encodingProfile, playlistPath, job.Process, job.LiveStreamId))
                 {
                     _logger.LogInformation(
-                        "Warm pool adopted FFmpeg process for media source {MediaSourceId}. Skipping kill. PlaylistPath: {Path}",
+                        "Warm pool adopted FFmpeg process for media source {MediaSourceId} profile {Profile}. Skipping kill. PlaylistPath: {Path}",
                         mediaSourceId,
+                        encodingProfile.ToString(),
                         playlistPath);
 
                     // Bump the live stream's ConsumerCount so that when
@@ -648,7 +651,15 @@ public sealed class TranscodeManager : ITranscodeManager, IDisposable
                 Id = transcodingJobId,
                 PlaySessionId = playSessionId,
                 LiveStreamId = liveStreamId,
-                MediaSource = state.MediaSource
+                MediaSource = state.MediaSource,
+                EncodingProfile = new EncodingProfile(
+                    state.OutputVideoCodec,
+                    state.OutputAudioCodec,
+                    state.OutputVideoBitrate,
+                    state.OutputAudioBitrate,
+                    state.OutputWidth,
+                    state.OutputHeight,
+                    state.OutputAudioChannels)
             };
 
             _activeTranscodingJobs.Add(job);

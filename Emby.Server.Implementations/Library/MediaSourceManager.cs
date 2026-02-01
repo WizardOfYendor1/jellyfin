@@ -59,6 +59,7 @@ namespace Emby.Server.Implementations.Library
         private readonly ConcurrentDictionary<string, ILiveStream> _openStreams = new ConcurrentDictionary<string, ILiveStream>(StringComparer.OrdinalIgnoreCase);
         private readonly AsyncNonKeyedLocker _liveStreamLocker = new(1);
         private readonly JsonSerializerOptions _jsonOptions = JsonDefaults.Options;
+        private readonly IEnumerable<IWarmStreamProvider> _warmStreamProviders;
 
         private IMediaSourceProvider[] _providers;
 
@@ -75,7 +76,8 @@ namespace Emby.Server.Implementations.Library
             IMediaEncoder mediaEncoder,
             IDirectoryService directoryService,
             IMediaStreamRepository mediaStreamRepository,
-            IMediaAttachmentRepository mediaAttachmentRepository)
+            IMediaAttachmentRepository mediaAttachmentRepository,
+            IEnumerable<IWarmStreamProvider> warmStreamProviders)
         {
             _appHost = appHost;
             _itemRepo = itemRepo;
@@ -90,6 +92,7 @@ namespace Emby.Server.Implementations.Library
             _directoryService = directoryService;
             _mediaStreamRepository = mediaStreamRepository;
             _mediaAttachmentRepository = mediaAttachmentRepository;
+            _warmStreamProviders = warmStreamProviders;
         }
 
         public void AddParts(IEnumerable<IMediaSourceProvider> providers)
@@ -872,6 +875,22 @@ namespace Emby.Server.Implementations.Library
 
                     if (liveStream.ConsumerCount <= 0)
                     {
+                        // Offer to warm stream providers before closing.
+                        // If adopted, the stream stays alive in _openStreams for reuse
+                        // via existing stream sharing in DefaultLiveTvService.
+                        foreach (var warmProvider in _warmStreamProviders)
+                        {
+                            if (warmProvider.TryAdoptStream(id, liveStream))
+                            {
+                                liveStream.ConsumerCount++;
+                                _logger.LogInformation(
+                                    "Warm stream provider adopted live stream {0}, consumer count bumped to {1}",
+                                    id,
+                                    liveStream.ConsumerCount);
+                                return;
+                            }
+                        }
+
                         _openStreams.TryRemove(id, out _);
 
                         _logger.LogInformation("Closing live stream {0}", id);
