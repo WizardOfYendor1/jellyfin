@@ -55,6 +55,25 @@ This document reviews the current warm pool implementation across both repositor
 - Now the warm pool check only runs once per session — when no playlist exists and a cold start (or warm hit) is actually needed
 - Eliminates log spam and unnecessary provider queries during active playback
 
+**Bug Fix: Plugin v1.7.0 — Production Testing Fixes** ✓
+
+Three critical bugs found during Android TV transcoding tests with direct play disabled:
+
+1. **ConsumerCount leak** — `TryGetPlaylistPath()` incremented `ConsumerCount` on every warm HIT poll (~every 3s) with no decrement when playback stopped. After a few warm HIT sessions, pool entries became permanently unevictable (ConsumerCount > 0 blocks eviction). Pool would lock up refusing all adoptions ("all entries have active consumers"). **Fix**: Removed `ConsumerCount++` — `LastAccessTime` update is sufficient for LRU/idle protection.
+
+2. **Admin UI refresh buttons broken** — Used inline `onclick` handlers blocked by CSP in Jellyfin's SPA plugin loader. **Fix**: Switched to `addEventListener` bindings like the Save button uses.
+
+3. **Warm HIT log noise** — Every 3s client poll generated 2 Information-level log lines during warm HIT playback (check + HIT message). **Fix**: Track first HIT per pool key, log at Info level only on first HIT, demote subsequent polls to Debug level.
+
+**Testing Results**:
+
+- Cold start: 30+ seconds (FFmpeg startup + buffering)
+- Warm HIT: **62ms** from channel open to playlist served (nearly instant)
+- History-aware LRU eviction working correctly (kept frequently-watched channels, evicted one-off channels)
+- Predictive next-channel protection working (correct predictions, prevented eviction)
+- Adoption, ConsumerCount management, and automatic pool population all functioning correctly
+- Plugin version: 1.7.0 (2026-02-01)
+
 ---
 
 ## Core Design Goal
