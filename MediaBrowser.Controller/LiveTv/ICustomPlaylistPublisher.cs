@@ -5,9 +5,9 @@ using MediaBrowser.Model.Dlna;
 namespace MediaBrowser.Controller.LiveTv;
 
 /// <summary>
-/// Defines a mechanism for warm stream providers to publish their playlists to a target location.
-/// Implement this interface in addition to <see cref="IWarmProcessProvider"/> if your plugin
-/// needs to control how the warm playlist file is written to the server's transcoding directory.
+/// Defines a mechanism for HLS playlist providers to publish their playlists to a target location.
+/// Implement this interface in addition to <see cref="IHlsPlaylistProvider"/> if your plugin
+/// needs to control how the playlist file is written to the server's transcoding directory.
 /// </summary>
 public interface ICustomPlaylistPublisher
 {
