@@ -343,6 +343,18 @@ public class DynamicHlsController : BaseJellyfinApiController
                                 encodingProfile.ToString(),
                                 warmPlaylistPath);
                             var warmText = await System.IO.File.ReadAllTextAsync(warmPlaylistPath, cancellationToken).ConfigureAwait(false);
+
+                            // Create the output playlist file so guard condition prevents re-querying on subsequent requests
+                            try
+                            {
+                                await System.IO.File.WriteAllTextAsync(playlistPath, warmText, cancellationToken).ConfigureAwait(false);
+                                _logger.LogDebug("Created output playlist at {PlaylistPath} for warm pool hit", playlistPath);
+                            }
+                            catch (Exception ex)
+                            {
+                                _logger.LogWarning(ex, "Failed to create output playlist at {PlaylistPath}", playlistPath);
+                            }
+
                             return Content(warmText, MimeTypes.GetMimeType("playlist.m3u8"));
                         }
 
