@@ -12,7 +12,7 @@ Jellyfin is a free software media system — a fork of Emby 3.5.2. This reposito
 
 ### Plugin-First Development Philosophy
 
-**IMPORTANT**: When implementing new features or modifications, **minimize changes to the Jellyfin server codebase**. Prefer implementing functionality in plugins (like `jellyfin-plugin-warmpool`) whenever possible or feasible. The server should only provide minimal hook interfaces (like `IWarmProcessProvider`, `IWarmStreamProvider`) while keeping all business logic in the plugin. This approach:
+**IMPORTANT**: When implementing new features or modifications, **minimize changes to the Jellyfin server codebase**. Prefer implementing functionality in plugins (like `jellyfin-plugin-warmpool`) whenever possible or feasible. The server should only provide minimal hook interfaces (like `IWarmProcessProvider`, `IWarmStreamProvider`, `ITunerResourceProvider`) while keeping all business logic in the plugin. This approach:
 
 - Keeps the core server lean and maintainable
 - Allows features to be optional and independently versioned
@@ -100,7 +100,7 @@ The codebase has two generations of code: **legacy Emby-era** (`Emby.*`, `MediaB
 
 ### Key Patterns
 
-**Dependency Injection**: All services are registered in DI. Controllers receive interfaces. Plugins can register `IWarmProcessProvider`, `IExternalIdProvider`, etc., which get injected as `IEnumerable<T>`.
+**Dependency Injection**: All services are registered in DI. Controllers receive interfaces. Plugins can register `IWarmProcessProvider`, `ITunerResourceProvider`, `IExternalIdProvider`, etc., which get injected as `IEnumerable<T>`.
 
 **Streaming/Transcoding flow**: `DynamicHlsController` handles HLS requests → `StreamingHelpers.GetStreamingState()` resolves media info → `TranscodeManager.StartFfMpeg()` spawns FFmpeg → segments written to `GetTranscodePath()`.
 
@@ -133,6 +133,12 @@ These are independent cleanup paths — both run even if the other has side effe
 
 Registered via DI as `IEnumerable<IWarmProcessProvider>`. Multiple providers supported; first-to-adopt wins. Only applies to infinite streams (LiveTV).
 
+`ITunerResourceProvider` (`MediaBrowser.Controller/LiveTv/ITunerResourceProvider.cs`) allows plugins to release tuner resources on demand when all tuners are in use:
+
+- `TryReleaseTunerResourceAsync(cancellationToken)` — called by `MediaSourceManager.OpenLiveStreamInternal` outside the stream lock when `LiveTvConflictException` is caught. Returns true if a tuner was freed.
+
+Registered via DI as `IEnumerable<ITunerResourceProvider>`. The retry pattern catches the conflict exception, asks providers to free resources, then retries once. No providers registered = identical to existing behavior.
+
 ## Related Repository: jellyfin-plugin-warmpool
 
 **Location**: `C:\sourcecode\GitHub\jellyfin-plugin-warmpool` (sibling to this repo)
@@ -144,10 +150,11 @@ The warm pool **plugin** implements `IWarmProcessProvider` and lives in a separa
 | File | Purpose |
 | ---- | ------- |
 | `Plugin.cs` | Entry point, extends `BasePlugin<PluginConfiguration>`, implements `IHasWebPages` for admin UI |
-| `PluginServiceRegistrator.cs` | DI registration: `IWarmProcessProvider`, `IWarmStreamProvider`, `WarmPoolEntryPoint` hosted service |
+| `PluginServiceRegistrator.cs` | DI registration: `IWarmProcessProvider`, `IWarmStreamProvider`, `ITunerResourceProvider`, `WarmPoolEntryPoint` hosted service |
 | `PluginConfiguration.cs` | Config: `Enabled`, `PoolSize` (default 3), `IdleTimeoutMinutes`, `MaxDiskUsageMB`, `FFmpegPath` |
 | `WarmProcessProvider.cs` | Bridge implementing `IWarmProcessProvider`, delegates to `WarmFFmpegProcessPool` |
 | `WarmStreamProvider.cs` | Bridge implementing `IWarmStreamProvider`, delegates to `WarmStreamPool` |
+| `TunerResourceProvider.cs` | Bridge implementing `ITunerResourceProvider`, evicts warm pool entries to free tuners on demand |
 | `WarmFFmpegProcessPool.cs` | Core FFmpeg process pool: adoption, lookup, session-aware eviction, idle cleanup |
 | `WarmStreamPool.cs` | Direct stream pool: adopts `ILiveStream` connections, session-aware eviction |
 | `WarmProcessInfo.cs` | Metadata per warm process (process, playlist, liveStreamId, session ownership, orphan flag) |
@@ -249,7 +256,7 @@ Always verify the build succeeds before committing to avoid pushing broken code.
 - **Session-aware eviction** (v1.8.0): Each pool entry tracks `OwnerSessionId` and `IsOrphaned`. When a user's session ends (`SessionEnded` event from WebSocket close / app exit), their entries are marked orphaned (`-10.0` penalty). Per-user fairness penalty (`-ownerSlots/totalSlots`) prevents any single user from monopolizing the pool. Orphaned entries remain available if no demand exists (lazy eviction)
 - **Session info pipeline**: `WarmPoolEntryPoint.OnPlaybackStopped` records `{mediaSourceId → sessionId}` via `WarmPoolManager.RecordRecentStop()`. During adoption (same pipeline), the pool calls `ConsumeRecentStop()` to tag the entry. No server interface changes needed
 - **Pool size**: Configurable max warm processes (default 3)
-- **Current version**: 1.8.0
+- **Current version**: 1.14.0
 
 ### Warm Pool Population: Automatic vs Manual
 
