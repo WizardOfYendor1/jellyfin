@@ -345,14 +345,34 @@ public class DynamicHlsController : BaseJellyfinApiController
                             var warmText = await System.IO.File.ReadAllTextAsync(warmPlaylistPath, cancellationToken).ConfigureAwait(false);
 
                             // Create the output playlist file so guard condition prevents re-querying on subsequent requests
-                            try
+                            bool published = false;
+                            if (warmProvider is ICustomPlaylistPublisher publisher)
                             {
-                                await System.IO.File.WriteAllTextAsync(playlistPath, warmText, cancellationToken).ConfigureAwait(false);
-                                _logger.LogDebug("Created output playlist at {PlaylistPath} for warm pool hit", playlistPath);
+                                try
+                                {
+                                    published = await publisher.TryPublishPlaylistAsync(
+                                        warmSourceId,
+                                        encodingProfile,
+                                        playlistPath,
+                                        cancellationToken).ConfigureAwait(false);
+                                }
+                                catch (Exception ex)
+                                {
+                                    _logger.LogWarning(ex, "Warm provider failed to publish playlist to {PlaylistPath}", playlistPath);
+                                }
                             }
-                            catch (Exception ex)
+
+                            if (!published)
                             {
-                                _logger.LogWarning(ex, "Failed to create output playlist at {PlaylistPath}", playlistPath);
+                                try
+                                {
+                                    await System.IO.File.WriteAllTextAsync(playlistPath, warmText, cancellationToken).ConfigureAwait(false);
+                                    _logger.LogDebug("Created output playlist at {PlaylistPath} for warm pool hit", playlistPath);
+                                }
+                                catch (Exception ex)
+                                {
+                                    _logger.LogWarning(ex, "Failed to create output playlist at {PlaylistPath}", playlistPath);
+                                }
                             }
 
                             return Content(warmText, MimeTypes.GetMimeType("playlist.m3u8"));
