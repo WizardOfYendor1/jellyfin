@@ -311,10 +311,9 @@ public class DynamicHlsController : BaseJellyfinApiController
 
         if (!System.IO.File.Exists(playlistPath))
         {
-            // Check warm process providers for pre-buffered LiveTV streams (only when no active session)
             if (state.MediaSource?.IsInfiniteStream == true)
             {
-                var warmSourceId = state.MediaSource.Id;
+                var mediaStateSourceId = state.MediaSource.Id;
                 var encodingProfile = new EncodingProfile(
                     state.OutputVideoCodec,
                     state.OutputAudioCodec,
@@ -326,14 +325,14 @@ public class DynamicHlsController : BaseJellyfinApiController
 
                 _logger.LogInformation(
                     "HLS playlist provider check: media source {MediaSourceId} with profile {Profile}, querying {Count} provider(s)",
-                    warmSourceId,
+                    mediaStateSourceId,
                     encodingProfile.ToString(),
                     _hlsPlaylistProviders.Count());
 
                 foreach (var hlsPlaylistProvider in _hlsPlaylistProviders)
                 {
                     var playlistContent = await hlsPlaylistProvider.TryGetPlaylistContentAsync(
-                        warmSourceId,
+                        mediaStateSourceId,
                         encodingProfile,
                         playlistPath,
                         cancellationToken).ConfigureAwait(false);
@@ -342,7 +341,7 @@ public class DynamicHlsController : BaseJellyfinApiController
                     {
                         _logger.LogInformation(
                             "HLS playlist provider HIT for media source {MediaSourceId} profile {Profile}, serving cached playlist",
-                            warmSourceId,
+                            mediaStateSourceId,
                             encodingProfile.ToString());
                         return Content(playlistContent, MimeTypes.GetMimeType("playlist.m3u8"));
                     }
@@ -350,7 +349,7 @@ public class DynamicHlsController : BaseJellyfinApiController
 
                 _logger.LogInformation(
                     "HLS playlist provider MISS for media source {MediaSourceId} profile {Profile}, proceeding with standard transcoding",
-                    warmSourceId,
+                    mediaStateSourceId,
                     encodingProfile.ToString());
             }
 
