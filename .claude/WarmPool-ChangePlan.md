@@ -46,7 +46,21 @@ This document reviews the current warm pool implementation across both repositor
 - **Admin UI** — Implemented `IHasWebPages` on `Plugin.cs` with embedded HTML config page (`Configuration/config.html`). Dashboard shows: pool configuration editor (save/load), live pool status (process count, stream count, disk usage), performance metrics (hit rates, adoption counts, eviction breakdowns), and viewing history summary (top channels, transition patterns, predicted next channels). REST API expanded with `GET /WarmPool/DetailedStatus`, `GET /WarmPool/Metrics`, `GET /WarmPool/History`, `GET /WarmPool/History/User/{userId}`.
 - All changes compile successfully with 0 errors, 0 warnings (server + plugin)
 
-**All phases complete.** The warm pool plugin now provides end-to-end fast LiveTV channel zapping with automatic management, metrics, and administration
+**Phase 7 (Tuner Resource Release) - COMPLETED** ✓
+
+- **Problem**: When all physical tuners are consumed (some by active viewers, some by warm pool entries), new tune requests fail with `LiveTvConflictException`. There was NO mechanism for the warm pool to release tuners on demand — eviction only happened during adoption (pool full) or idle timeout.
+- **Root cause**: `MediaSourceManager.OpenLiveStreamInternal` holds `_liveStreamLocker` during the entire tuner host call chain. `CloseLiveStream` also acquires `_liveStreamLocker`. Any resource release calling `CloseLiveStream` from within the lock scope would deadlock.
+- **7a: ITunerResourceProvider interface** — New generic interface `MediaBrowser.Controller/LiveTv/ITunerResourceProvider.cs` with `TryReleaseTunerResourceAsync(CancellationToken)`. No warm-pool-specific concepts — any plugin holding tuner resources can implement this.
+- **7b: Retry pattern in MediaSourceManager** — `OpenLiveStreamInternal` wraps `OpenLiveStreamInternalCore` with catch-release-retry. When `LiveTvConflictException` propagates out of the `using` block, the lock is released. Providers run OUTSIDE the lock, safely calling `CloseLiveStream`. Retry gets fresh `_openStreams` snapshot reflecting the freed resource. No providers registered → exception propagates immediately (identical to existing behavior).
+- **7c: Plugin TunerResourceProvider** — New `TunerResourceProvider.cs` implements `ITunerResourceProvider`. Tries FFmpeg process pool first, then stream pool. Uses same session-aware eviction scoring (orphan penalty, fairness, idle time, history priority).
+- **7d: EvictForTunerReleaseAsync** — New async method on both `WarmFFmpegProcessPool` and `WarmStreamPool`. Unlike fire-and-forget eviction during adoption, this method AWAITS `CloseLiveStream` to ensure the tuner is actually freed before returning.
+- **Known issue documented**: HEAD request in `M3UTunerHost.GetChannelStream()` causes double TVheadend subscription for extensionless URLs. Harmless (quick unsubscribe) but could be optimized in the future.
+- Server changes: 2 files (new interface + retry logic in MediaSourceManager)
+- Plugin changes: 4 files (new TunerResourceProvider + EvictForTunerReleaseAsync on both pools + DI registration)
+- Plugin version bumped to 1.14.0
+- All changes compile successfully with 0 errors, 0 warnings (server + plugin)
+
+**All phases complete.** The warm pool plugin now provides end-to-end fast LiveTV channel zapping with automatic management, metrics, tuner resource release, and administration
 
 **Bug Fix: Redundant Warm Pool Checks (Post-Phase)** ✓
 

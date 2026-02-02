@@ -650,6 +650,53 @@ private readonly AsyncNonKeyedLocker _liveStreamLocker = new(1);
 - **`OpenLiveStreamInternal()`**: acquires lock, calls provider, stores stream, optionally probes with FFprobe
 - **`CloseLiveStream(id)`**: acquires lock, decrements `ConsumerCount`, closes and removes if zero
 
+### Tuner Resource Release (ITunerResourceProvider)
+
+When all physical tuners are in use (some by active viewers, some by warm pool entries), new tune requests fail with `LiveTvConflictException`. The `ITunerResourceProvider` interface allows plugins to free non-essential tuner resources on demand.
+
+`MediaBrowser.Controller/LiveTv/ITunerResourceProvider.cs`:
+
+```csharp
+public interface ITunerResourceProvider
+{
+    Task<bool> TryReleaseTunerResourceAsync(CancellationToken cancellationToken);
+}
+```
+
+#### Integration in MediaSourceManager
+
+`OpenLiveStreamInternal()` wraps the core logic with a catch-release-retry pattern:
+
+```text
+try:
+  return await OpenLiveStreamInternalCore(request, cancellationToken)
+catch LiveTvConflictException when _tunerResourceProviders.Any():
+  // Lock is released here (using block disposed on exception)
+  // Safe to call CloseLiveStream from providers
+  foreach provider in _tunerResourceProviders:
+    if await provider.TryReleaseTunerResourceAsync(cancellationToken):
+      break
+  if !freed: throw  // propagate original exception
+  // Retry once with fresh lock and fresh _openStreams snapshot
+  return await OpenLiveStreamInternalCore(request, cancellationToken)
+```
+
+**Why this works**:
+
+- `_liveStreamLocker` (count=1) is held during `OpenLiveStreamInternalCore` which calls the tuner host chain
+- When `LiveTvConflictException` propagates out of the `using` block, the lock is released
+- Provider runs OUTSIDE lock — can safely call `CloseLiveStream` (which also acquires the lock)
+- Retry gets fresh `_openStreams.Values.ToList()` reflecting the freed resource
+- No providers registered → `_tunerResourceProviders.Any()` is false → exception propagates immediately (identical to existing behavior)
+
+#### Deadlock Avoidance
+
+This design is critical for avoiding deadlocks. `CloseLiveStream` also acquires `_liveStreamLocker`. If we tried to call a resource provider from within the lock scope, it would deadlock. The catch-release-retry pattern ensures the provider runs outside the lock.
+
+#### Known Issue: HEAD Request Double Subscription
+
+`M3UTunerHost.GetChannelStream()` sends an HTTP HEAD request (line 105) to check MIME type for extensionless URLs. TVheadend interprets this as a tuning request, creating a temporary subscription that immediately unsubscribes. This causes double subscription log entries in TVheadend. The HEAD request is harmless (quick unsubscribe) but could be optimized in the future by caching MIME type results per tuner host or using URL heuristics.
+
 ### Branch Commits (feature/fastchannelzapping)
 
 | Commit | Description |
@@ -677,7 +724,7 @@ private readonly AsyncNonKeyedLocker _liveStreamLocker = new(1);
 
 | File | Key Class | Purpose |
 |------|-----------|---------|
-| `Emby.Server.Implementations/Library/MediaSourceManager.cs` | `MediaSourceManager` | Open/close live streams, manage `_openStreams` registry |
+| `Emby.Server.Implementations/Library/MediaSourceManager.cs` | `MediaSourceManager` | Open/close live streams, manage `_openStreams` registry, tuner resource retry |
 | `Emby.Server.Implementations/Session/SessionManager.cs` | `SessionManager` | Track playback sessions, trigger cleanup |
 | `MediaBrowser.MediaEncoding/Transcoding/TranscodeManager.cs` | `TranscodeManager` | FFmpeg lifecycle, warm pool adoption |
 
