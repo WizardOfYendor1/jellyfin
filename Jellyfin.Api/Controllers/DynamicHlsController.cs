@@ -60,8 +60,8 @@ public class DynamicHlsController : BaseJellyfinApiController
     private readonly EncodingHelper _encodingHelper;
     private readonly IDynamicHlsPlaylistGenerator _dynamicHlsPlaylistGenerator;
     private readonly DynamicHlsHelper _dynamicHlsHelper;
-    private readonly IEnumerable<IWarmProcessProvider> _warmProcessProviders;
-    private static int _warmProviderLoggedOnce;
+    private readonly IEnumerable<IHlsPlaylistProvider> _hlsPlaylistProviders;
+    private static int _hlsPlaylistProviderLoggedOnce;
     private readonly EncodingOptions _encodingOptions;
 
     /// <summary>
@@ -78,7 +78,7 @@ public class DynamicHlsController : BaseJellyfinApiController
     /// <param name="dynamicHlsHelper">Instance of <see cref="DynamicHlsHelper"/>.</param>
     /// <param name="encodingHelper">Instance of <see cref="EncodingHelper"/>.</param>
     /// <param name="dynamicHlsPlaylistGenerator">Instance of <see cref="IDynamicHlsPlaylistGenerator"/>.</param>
-    /// <param name="warmProcessProviders">Warm process providers from plugins.</param>
+    /// <param name="hlsPlaylistProviders">HLS playlist providers from plugins.</param>
     public DynamicHlsController(
         ILibraryManager libraryManager,
         IUserManager userManager,
@@ -91,7 +91,7 @@ public class DynamicHlsController : BaseJellyfinApiController
         DynamicHlsHelper dynamicHlsHelper,
         EncodingHelper encodingHelper,
         IDynamicHlsPlaylistGenerator dynamicHlsPlaylistGenerator,
-        IEnumerable<IWarmProcessProvider> warmProcessProviders)
+        IEnumerable<IHlsPlaylistProvider> hlsPlaylistProviders)
     {
         _libraryManager = libraryManager;
         _userManager = userManager;
@@ -104,12 +104,12 @@ public class DynamicHlsController : BaseJellyfinApiController
         _dynamicHlsHelper = dynamicHlsHelper;
         _encodingHelper = encodingHelper;
         _dynamicHlsPlaylistGenerator = dynamicHlsPlaylistGenerator;
-        _warmProcessProviders = warmProcessProviders;
+        _hlsPlaylistProviders = hlsPlaylistProviders;
 
-        var warmProviderCount = _warmProcessProviders.Count();
-        if (warmProviderCount > 0 && Interlocked.Exchange(ref _warmProviderLoggedOnce, 1) == 0)
+        var hlsPlaylistProviderCount = _hlsPlaylistProviders.Count();
+        if (hlsPlaylistProviderCount > 0 && Interlocked.Exchange(ref _hlsPlaylistProviderLoggedOnce, 1) == 0)
         {
-            _logger.LogInformation("DynamicHlsController: {Count} warm process provider(s) registered", warmProviderCount);
+            _logger.LogInformation("DynamicHlsController: {Count} HLS playlist provider(s) registered", hlsPlaylistProviderCount);
         }
 
         _encodingOptions = serverConfigurationManager.GetEncodingOptions();
@@ -325,31 +325,31 @@ public class DynamicHlsController : BaseJellyfinApiController
                     state.OutputAudioChannels);
 
                 _logger.LogInformation(
-                    "Warm pool check: media source {MediaSourceId} with profile {Profile}, querying {Count} provider(s)",
+                    "HLS playlist provider check: media source {MediaSourceId} with profile {Profile}, querying {Count} provider(s)",
                     warmSourceId,
                     encodingProfile.ToString(),
-                    _warmProcessProviders.Count());
+                    _hlsPlaylistProviders.Count());
 
-                foreach (var warmProvider in _warmProcessProviders)
+                foreach (var hlsPlaylistProvider in _hlsPlaylistProviders)
                 {
-                    var warmContent = await warmProvider.TryGetWarmPlaylistContentAsync(
+                    var playlistContent = await hlsPlaylistProvider.TryGetPlaylistContentAsync(
                         warmSourceId,
                         encodingProfile,
                         playlistPath,
                         cancellationToken).ConfigureAwait(false);
 
-                    if (warmContent is not null)
+                    if (playlistContent is not null)
                     {
                         _logger.LogInformation(
-                            "Warm process HIT for media source {MediaSourceId} profile {Profile}, serving cached playlist",
+                            "HLS playlist provider HIT for media source {MediaSourceId} profile {Profile}, serving cached playlist",
                             warmSourceId,
                             encodingProfile.ToString());
-                        return Content(warmContent, MimeTypes.GetMimeType("playlist.m3u8"));
+                        return Content(playlistContent, MimeTypes.GetMimeType("playlist.m3u8"));
                     }
                 }
 
                 _logger.LogInformation(
-                    "Warm pool MISS for media source {MediaSourceId} profile {Profile}, proceeding with cold start",
+                    "HLS playlist provider MISS for media source {MediaSourceId} profile {Profile}, proceeding with standard transcoding",
                     warmSourceId,
                     encodingProfile.ToString());
             }

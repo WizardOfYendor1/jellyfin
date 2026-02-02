@@ -59,7 +59,7 @@ namespace Emby.Server.Implementations.Library
         private readonly ConcurrentDictionary<string, ILiveStream> _openStreams = new ConcurrentDictionary<string, ILiveStream>(StringComparer.OrdinalIgnoreCase);
         private readonly AsyncNonKeyedLocker _liveStreamLocker = new(1);
         private readonly JsonSerializerOptions _jsonOptions = JsonDefaults.Options;
-        private readonly IEnumerable<IWarmStreamProvider> _warmStreamProviders;
+        private readonly IEnumerable<ILiveStreamProvider> _liveStreamProviders;
         private readonly IEnumerable<ITunerResourceProvider> _tunerResourceProviders;
 
         private IMediaSourceProvider[] _providers;
@@ -78,7 +78,7 @@ namespace Emby.Server.Implementations.Library
             IDirectoryService directoryService,
             IMediaStreamRepository mediaStreamRepository,
             IMediaAttachmentRepository mediaAttachmentRepository,
-            IEnumerable<IWarmStreamProvider> warmStreamProviders,
+            IEnumerable<ILiveStreamProvider> liveStreamProviders,
             IEnumerable<ITunerResourceProvider> tunerResourceProviders)
         {
             _appHost = appHost;
@@ -94,7 +94,7 @@ namespace Emby.Server.Implementations.Library
             _directoryService = directoryService;
             _mediaStreamRepository = mediaStreamRepository;
             _mediaAttachmentRepository = mediaAttachmentRepository;
-            _warmStreamProviders = warmStreamProviders;
+            _liveStreamProviders = liveStreamProviders;
             _tunerResourceProviders = tunerResourceProviders;
         }
 
@@ -914,16 +914,16 @@ namespace Emby.Server.Implementations.Library
 
                     if (liveStream.ConsumerCount <= 0)
                     {
-                        // Offer to warm stream providers before closing.
+                        // Offer to live stream providers before closing.
                         // If adopted, the stream stays alive in _openStreams for reuse
                         // via existing stream sharing in DefaultLiveTvService.
-                        foreach (var warmProvider in _warmStreamProviders)
+                        foreach (var liveStreamProvider in _liveStreamProviders)
                         {
-                            if (warmProvider.TryAdoptStream(id, liveStream))
+                            if (liveStreamProvider.TryAdoptStream(id, liveStream))
                             {
                                 liveStream.ConsumerCount++;
                                 _logger.LogInformation(
-                                    "Warm stream provider adopted live stream {0}, consumer count bumped to {1}",
+                                    "Live stream provider adopted live stream {0}, consumer count bumped to {1}",
                                     id,
                                     liveStream.ConsumerCount);
                                 return;

@@ -45,7 +45,7 @@ public sealed class TranscodeManager : ITranscodeManager, IDisposable
     private readonly IMediaEncoder _mediaEncoder;
     private readonly IMediaSourceManager _mediaSourceManager;
     private readonly IAttachmentExtractor _attachmentExtractor;
-    private readonly IEnumerable<IWarmProcessProvider> _warmProcessProviders;
+    private readonly IEnumerable<IHlsPlaylistProvider> _hlsPlaylistProviders;
 
     private readonly List<TranscodingJob> _activeTranscodingJobs = new();
     private readonly AsyncKeyedLocker<string> _transcodingLocks = new(o =>
@@ -69,7 +69,7 @@ public sealed class TranscodeManager : ITranscodeManager, IDisposable
     /// <param name="mediaEncoder">The <see cref="IMediaEncoder"/>.</param>
     /// <param name="mediaSourceManager">The <see cref="IMediaSourceManager"/>.</param>
     /// <param name="attachmentExtractor">The <see cref="IAttachmentExtractor"/>.</param>
-    /// <param name="warmProcessProviders">The <see cref="IWarmProcessProvider"/> implementations.</param>
+    /// <param name="hlsPlaylistProviders">The <see cref="IHlsPlaylistProvider"/> implementations.</param>
     public TranscodeManager(
         ILoggerFactory loggerFactory,
         IFileSystem fileSystem,
@@ -81,7 +81,7 @@ public sealed class TranscodeManager : ITranscodeManager, IDisposable
         IMediaEncoder mediaEncoder,
         IMediaSourceManager mediaSourceManager,
         IAttachmentExtractor attachmentExtractor,
-        IEnumerable<IWarmProcessProvider> warmProcessProviders)
+        IEnumerable<IHlsPlaylistProvider> hlsPlaylistProviders)
     {
         _loggerFactory = loggerFactory;
         _fileSystem = fileSystem;
@@ -93,7 +93,7 @@ public sealed class TranscodeManager : ITranscodeManager, IDisposable
         _mediaEncoder = mediaEncoder;
         _mediaSourceManager = mediaSourceManager;
         _attachmentExtractor = attachmentExtractor;
-        _warmProcessProviders = warmProcessProviders;
+        _hlsPlaylistProviders = hlsPlaylistProviders;
 
         _logger = loggerFactory.CreateLogger<TranscodeManager>();
         DeleteEncodedMediaCache();
@@ -245,12 +245,12 @@ public sealed class TranscodeManager : ITranscodeManager, IDisposable
             var playlistPath = job.Path;
             var encodingProfile = job.EncodingProfile;
 
-            foreach (var provider in _warmProcessProviders)
+            foreach (var provider in _hlsPlaylistProviders)
             {
                 if (provider.TryAdoptProcess(mediaSourceId, encodingProfile, playlistPath, job.Process, job.LiveStreamId))
                 {
                     _logger.LogInformation(
-                        "Warm pool adopted FFmpeg process for media source {MediaSourceId} profile {Profile}. Skipping kill. PlaylistPath: {Path}",
+                        "HLS playlist provider adopted FFmpeg process for media source {MediaSourceId} profile {Profile}. Skipping kill. PlaylistPath: {Path}",
                         mediaSourceId,
                         encodingProfile.ToString(),
                         playlistPath);
