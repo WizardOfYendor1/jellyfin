@@ -22,6 +22,15 @@ Jellyfin is a free software media system — a fork of Emby 3.5.2. This reposito
 
 Only add server-side code when absolutely necessary (e.g., defining plugin interfaces, adding essential hooks at integration points). All feature logic, algorithms, and business rules should live in the plugin.
 
+## Reference Materials
+
+### TVheadend
+
+        You have permissions to access these websites for tvheadend research.
+        https://docs.tvheadend.org/documentation/development/
+        https://docs.tvheadend.org/documentation
+        https://github.com/tvheadend/tvheadend
+
 ## Build & Test Commands
 
 ```bash
