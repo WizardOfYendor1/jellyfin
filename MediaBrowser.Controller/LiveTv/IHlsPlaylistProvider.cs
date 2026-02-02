@@ -50,4 +50,18 @@ public interface IHlsPlaylistProvider
         EncodingProfile encodingProfile,
         string targetPlaylistPath,
         CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Notifies the provider that a playlist is about to be served to a client.
+    /// The provider should increment its consumer count to prevent eviction while the client
+    /// actively consumes segments. The server will call this BEFORE returning the playlist
+    /// to the client.
+    /// </summary>
+    /// <param name="mediaSourceId">The media source ID.</param>
+    /// <param name="encodingProfile">The encoding parameters of the playlist being served.</param>
+    /// <remarks>
+    /// The provider is responsible for decrementing the consumer count when the stream ends
+    /// (via PlaybackStopped events) or when a session ends (SessionEnded events).
+    /// </remarks>
+    void NotifyPlaylistConsumer(string mediaSourceId, EncodingProfile encodingProfile);
 }
