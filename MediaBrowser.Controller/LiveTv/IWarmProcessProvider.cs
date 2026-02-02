@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace MediaBrowser.Controller.LiveTv;
 
@@ -32,4 +34,20 @@ public interface IWarmProcessProvider
     /// The provider must close this when it eventually stops the warm process.</param>
     /// <returns>True if the provider adopted the process; false to proceed with normal kill.</returns>
     bool TryAdoptProcess(string mediaSourceId, EncodingProfile encodingProfile, string playlistPath, Process ffmpegProcess, string? liveStreamId);
+
+    /// <summary>
+    /// Tries to get a warm HLS playlist and publish it to the target location.
+    /// This method encapsulates the entire warm playlist workflow: detection, file reading,
+    /// publishing to the transcoding directory, and logging.
+    /// </summary>
+    /// <param name="mediaSourceId">The media source ID.</param>
+    /// <param name="encodingProfile">The encoding parameters requested by the client.</param>
+    /// <param name="targetPlaylistPath">The absolute path where the server expects the playlist file to exist.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>A task containing the playlist content if a warm playlist was found and published; null otherwise.</returns>
+    Task<string?> TryGetWarmPlaylistContentAsync(
+        string mediaSourceId,
+        EncodingProfile encodingProfile,
+        string targetPlaylistPath,
+        CancellationToken cancellationToken);
 }
