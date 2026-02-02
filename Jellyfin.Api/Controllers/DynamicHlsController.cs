@@ -343,6 +343,12 @@ public class DynamicHlsController : BaseJellyfinApiController
                             "HLS playlist provider HIT for media source {MediaSourceId} profile {Profile}, serving cached playlist",
                             mediaStateSourceId,
                             encodingProfile.ToString());
+
+                        // Notify the provider that a consumer is about to receive this playlist.
+                        // The provider will increment its consumer count to prevent eviction
+                        // while the client actively consumes segments.
+                        hlsPlaylistProvider.NotifyPlaylistConsumer(mediaStateSourceId, encodingProfile);
+
                         return Content(playlistContent, MimeTypes.GetMimeType("playlist.m3u8"));
                     }
                 }
