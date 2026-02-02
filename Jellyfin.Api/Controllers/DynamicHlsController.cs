@@ -332,57 +332,19 @@ public class DynamicHlsController : BaseJellyfinApiController
 
                 foreach (var warmProvider in _warmProcessProviders)
                 {
-                    if (warmProvider.TryGetWarmPlaylist(warmSourceId, encodingProfile, out var warmPlaylistPath)
-                        && warmPlaylistPath is not null)
+                    var warmContent = await warmProvider.TryGetWarmPlaylistContentAsync(
+                        warmSourceId,
+                        encodingProfile,
+                        playlistPath,
+                        cancellationToken).ConfigureAwait(false);
+
+                    if (warmContent is not null)
                     {
-                        if (System.IO.File.Exists(warmPlaylistPath))
-                        {
-                            _logger.LogInformation(
-                                "Warm process HIT for media source {MediaSourceId} profile {Profile}, serving playlist: {Path}",
-                                warmSourceId,
-                                encodingProfile.ToString(),
-                                warmPlaylistPath);
-                            var warmText = await System.IO.File.ReadAllTextAsync(warmPlaylistPath, cancellationToken).ConfigureAwait(false);
-
-                            // Create the output playlist file so guard condition prevents re-querying on subsequent requests
-                            bool published = false;
-                            if (warmProvider is ICustomPlaylistPublisher publisher)
-                            {
-                                try
-                                {
-                                    published = await publisher.TryPublishPlaylistAsync(
-                                        warmSourceId,
-                                        encodingProfile,
-                                        playlistPath,
-                                        cancellationToken).ConfigureAwait(false);
-                                }
-                                catch (Exception ex)
-                                {
-                                    _logger.LogWarning(ex, "Warm provider failed to publish playlist to {PlaylistPath}", playlistPath);
-                                }
-                            }
-
-                            if (!published)
-                            {
-                                try
-                                {
-                                    await System.IO.File.WriteAllTextAsync(playlistPath, warmText, cancellationToken).ConfigureAwait(false);
-                                    _logger.LogDebug("Created output playlist at {PlaylistPath} for warm pool hit", playlistPath);
-                                }
-                                catch (Exception ex)
-                                {
-                                    _logger.LogWarning(ex, "Failed to create output playlist at {PlaylistPath}", playlistPath);
-                                }
-                            }
-
-                            return Content(warmText, MimeTypes.GetMimeType("playlist.m3u8"));
-                        }
-
-                        _logger.LogWarning(
-                            "Warm provider returned playlist for {MediaSourceId} profile {Profile} but file not found on disk: {Path}",
+                        _logger.LogInformation(
+                            "Warm process HIT for media source {MediaSourceId} profile {Profile}, serving cached playlist",
                             warmSourceId,
-                            encodingProfile.ToString(),
-                            warmPlaylistPath);
+                            encodingProfile.ToString());
+                        return Content(warmContent, MimeTypes.GetMimeType("playlist.m3u8"));
                     }
                 }
 
