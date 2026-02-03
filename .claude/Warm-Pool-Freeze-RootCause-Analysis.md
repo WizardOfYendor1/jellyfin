@@ -72,7 +72,7 @@ The plugin's eviction logic uses **two independent criteria**:
 1. **LRU Scoring**: `historyPriority - (idleMinutes / 60.0)`
    - High history → harder to evict
    - Recent access (high `LastAccessTime`) → harder to evict
-   
+
 2. **Idle Check**: `ConsumerCount <= 0` gating
    - If `ConsumerCount > 0` → never evict
    - If `ConsumerCount == 0` → eligible for eviction

@@ -69,23 +69,23 @@ The plugin already tracks `PlaybackStopped` events in `WarmPoolEntryPoint`. For 
 private void OnPlaybackStopped(object? sender, PlaybackStopEventArgs e)
 {
     // ... existing logic ...
-    
+
     if (e.MediaSourceId is not null && e.MediaSourceId.StartsWith("md5:", StringComparison.Ordinal))
     {
         var pool = EnsureWarmPool();
-        
+
         // For EVERY encoding profile that might have been serving this mediaSourceId,
         // try to decrement. This handles the case where a client switched encoding profiles
         // (unlikely but possible) or where the same channel has multiple encoding variants.
-        
+
         // Option A (Simple): Decrement ALL pool entries matching this mediaSourceId
         pool.DecrementAllConsumersForMediaSource(e.MediaSourceId);
-        
+
         // Option B (Precise): Track which specific encoding profile was being consumed
         // This requires passing encoding profile info through PlaybackStopEventArgs
         // (harder, requires server change)
     }
-    
+
     // ... rest of existing logic ...
 }
 ```
@@ -124,7 +124,7 @@ public void DecrementAllConsumersForMediaSource(string mediaSourceId)
     foreach (var kvp in _warmProcesses)
     {
         var (key, process) = kvp;
-        
+
         // key is "mediaSourceId|encodingProfileHash"
         var parts = key.Split('|');
         if (parts.Length == 2 && parts[0] == mediaSourceId && process.ConsumerCount > 0)
@@ -159,7 +159,7 @@ if (warmProcess.ConsumerCount > 0)
 
 ## Testing Checklist
 
-1. **Warm HIT consumer increment**: 
+1. **Warm HIT consumer increment**:
    - Start warm process
    - Client requests playlist (warm HIT)
    - Verify `ConsumerCount > 0` in pool status API
