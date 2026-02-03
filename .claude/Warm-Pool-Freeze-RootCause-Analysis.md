@@ -112,6 +112,25 @@ Either way, the root cause is the same: **ConsumerCount must be incremented when
 
 ---
 
+## Additional Freeze Cause (2026-02-03)
+
+Even with correct consumer tracking, warm HIT playback can still freeze if the **session playlist file is only copied once**.
+
+### What Happens
+
+1. `DynamicHlsController` asks the warm provider **only when the session playlist file does not exist**.
+2. The plugin copies the warm playlist to the session path and returns the content.
+3. The session playlist file is **never updated again** (because the controller stops querying once it exists).
+4. Clients keep reloading the same stale playlist and eventually request segments that no longer exist.
+
+With typical segment lengths (e.g., 3s), this produces a freeze after ~8–15 seconds if the warm process is young (few segments available at copy time).
+
+### Fix
+
+The plugin now **continuously republishes** the warm playlist to the session playlist path while consumers are active. This keeps playlist content fresh and prevents segment starvation without requiring Jellyfin server changes.
+
+---
+
 ## The Fix Architecture
 
 ### What Was Wrong With Old Approach
