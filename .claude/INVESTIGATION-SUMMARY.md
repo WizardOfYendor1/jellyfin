@@ -17,6 +17,10 @@ Client tunes channel → Warm HIT served (ConsumerCount = 0)
 → FREEZE after ~10 seconds
 ```
 
+### Additional Freeze Cause (2026-02-03)
+Even with correct consumer tracking, warm HIT playback can still freeze if the **session playlist file is only copied once**. The server stops querying providers once the playlist file exists, so the session playlist never updates and clients eventually request deleted or missing segments.  
+**Plugin fix:** continuously republish the warm playlist to the session path while consumers are active.
+
 ### Why v1.7.0 Bug Fix Wasn't Sufficient
 The v1.7.0 fix relied on `LastAccessTime` updates alone for eviction protection. However:
 - Eviction logic checks TWO gates: `LastAccessTime` (suggests not idle) AND `ConsumerCount` (suggests evictable)

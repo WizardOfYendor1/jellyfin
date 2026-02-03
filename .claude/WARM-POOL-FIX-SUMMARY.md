@@ -122,6 +122,18 @@ The plugin now implements the consumer tracking mechanism. See `.claude/Consumer
    - Idle timeout should skip entries with `ConsumerCount > 0`
    - LRU eviction should never select entries with active consumers
 
+### Plugin-Side Playlist Refresh (2026-02-03) ✓
+
+**Problem:** Warm HITs copied the playlist to the session path only once. Subsequent client playlist reloads received a stale file, causing segment starvation and freezes after ~8–15 seconds.
+
+**Fix:** The plugin now **continuously republishes** the warm playlist to the session playlist path while consumers are active. This keeps the playlist fresh without requiring server changes.
+
+### Stream Pool Coordination (2026-02-03) ✓
+
+**Problem:** Warm FFmpeg process adoption and warm stream adoption could overlap, leaving stream entries pinned indefinitely.
+
+**Fix:** Stream adoption is skipped when a warm FFmpeg process exists for the same channel, and any existing warm stream entry is removed when a warm process is adopted.
+
 ## How It Works
 
 ### Two-Phase Consumer Lifecycle

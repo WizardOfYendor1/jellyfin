@@ -550,6 +550,8 @@ In `GetLiveHlsStream()`, the warm pool check is **guarded by the playlist-exists
    c. Acquire transcode lock, start FFmpeg
 ```
 
+**Important for warm hits:** Because the server stops querying providers once the session playlist file exists, the plugin must keep the session playlist fresh. The warm pool plugin now continuously republishes the warm playlist to the session path while consumers are active.
+
 #### TranscodeManager (offer on stop)
 
 In `KillTranscodingJob()`, before killing FFmpeg:
@@ -604,14 +606,13 @@ This matches how Jellyfin generates `ChannelInfo.Id` in `M3uParser` via `path.Ge
 **Plugin FFmpeg arguments** (for manual pre-warm via REST API):
 
 ```text
--i "{streamUrl}" -codec copy -f hls -hls_time 3 -hls_list_size 5
--hls_flags delete_segments+append_list -start_number 0
+-i "{streamUrl}" -codec copy -f hls -hls_playlist_type event -hls_list_size 0 -hls_time 3 -start_number 0
 -hls_base_url "hls/{warmPrefix}/"
 -hls_segment_filename "{transcodePath}/{warmPrefix}%d.ts"
 "{transcodePath}/{warmPrefix}.m3u8"
 ```
 
-Key: `-codec copy` means remux only (no transcoding). `-hls_list_size 5` keeps a rolling 15-second window. `-hls_flags delete_segments` auto-deletes old segments.
+Key: `-codec copy` means remux only (no transcoding). `-hls_playlist_type event -hls_list_size 0` mirrors Jellyfin’s live HLS output (growing playlist).
 
 **Playlist readiness check**: Polls every 100ms for up to 15 seconds, waiting for the .m3u8 file to exist and contain at least one `.ts` reference.
 
