@@ -347,8 +347,7 @@ public class DynamicHlsController : BaseJellyfinApiController
                         // Notify the provider that a consumer is about to receive this playlist.
                         // The provider will increment its consumer count to prevent eviction
                         // while the client actively consumes segments.
-                        hlsPlaylistProvider.NotifyPlaylistConsumer(mediaStateSourceId, encodingProfile);
-
+                        hlsPlaylistProvider.NotifyPlaylistConsumer(mediaStateSourceId, encodingProfile, playSessionId);
                         return Content(playlistContent, MimeTypes.GetMimeType("playlist.m3u8"));
                     }
                 }

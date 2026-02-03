@@ -29,12 +29,12 @@ The v1.7.0 fix relied on `LastAccessTime` updates alone for eviction protection.
 
 **5 commits pushed to `feature/fastchannelzapping` branch:**
 
-1. **`002b00fd6`**: Add `NotifyPlaylistConsumer()` method to `IHlsPlaylistProvider`
+1. **`002b00fd6`**: Add `NotifyPlaylistConsumer(..., playSessionId)` method to `IHlsPlaylistProvider`
    - New interface contract for consumer tracking notification
    - Called when server serves warm playlist to client
 
 2. **`002b00fd6`**: Update `DynamicHlsController.GetLiveHlsStream()`
-   - Calls `NotifyPlaylistConsumer()` after successful warm HIT
+   - Calls `NotifyPlaylistConsumer(..., playSessionId)` after successful warm HIT
    - Executes BEFORE returning playlist to client
 
 3. **`db5d84399`**: Add `Consumer-Tracking-Fix.md`
@@ -58,7 +58,7 @@ SERVER SIDE (COMPLETED)
 │
 ├─ Calls TryGetPlaylistContentAsync() → returns content
 │
-├─ Calls NotifyPlaylistConsumer(mediaSourceId, encodingProfile)
+├─ Calls NotifyPlaylistConsumer(mediaSourceId, encodingProfile, playSessionId)
 │   └─→ Plugin increments ConsumerCount
 │
 └─ Returns playlist to client
@@ -66,7 +66,7 @@ SERVER SIDE (COMPLETED)
 
 PLUGIN SIDE (COMPLETED)
 │
-├─ WarmProcessProvider.NotifyPlaylistConsumer()
+├─ WarmProcessProvider.NotifyPlaylistConsumer(..., playSessionId)
 │   └─→ Calls pool.IncrementConsumerCount()
 │
 ├─ Client consumes segments while ConsumerCount > 0
@@ -92,12 +92,12 @@ PLUGIN SIDE (COMPLETED)
 
 | File | Change | Impact |
 |------|--------|--------|
-| `MediaBrowser.Controller/LiveTv/IHlsPlaylistProvider.cs` | Add `NotifyPlaylistConsumer()` | Interface contract for consumer tracking |
-| `Jellyfin.Api/Controllers/DynamicHlsController.cs` | Call `NotifyPlaylistConsumer()` on warm HIT | Notifies plugin when serving warm playlist |
-| `jellyfin-plugin-warmpool/WarmProcessProvider.cs` | Implement `NotifyPlaylistConsumer()` | Increment consumer count on warm HIT |
+| `MediaBrowser.Controller/LiveTv/IHlsPlaylistProvider.cs` | Add `NotifyPlaylistConsumer(..., playSessionId)` | Interface contract for consumer tracking |
+| `Jellyfin.Api/Controllers/DynamicHlsController.cs` | Call `NotifyPlaylistConsumer(..., playSessionId)` on warm HIT | Notifies plugin when serving warm playlist |
+| `jellyfin-plugin-warmpool/WarmProcessProvider.cs` | Implement `NotifyPlaylistConsumer(..., playSessionId)` | Increment consumer count on warm HIT |
 | `jellyfin-plugin-warmpool/WarmFFmpegProcessPool.cs` | Add consumer count increment/decrement helpers | Prevent eviction during active consumption |
 | `jellyfin-plugin-warmpool/WarmPoolEntryPoint.cs` | Decrement consumers on `PlaybackStopped` | Release eviction protection when playback ends |
-| `jellyfin-plugin-warmpool/Jellyfin.Plugin.WarmPool.csproj` | Bump version to 1.14.1 | Bug-fix release |
+| `jellyfin-plugin-warmpool/Jellyfin.Plugin.WarmPool.csproj` | Bump version to 1.14.2 | Bug-fix release |
 
 ### All Changes
 - ✅ Compiled successfully (0 errors, 0 warnings)
@@ -107,11 +107,11 @@ PLUGIN SIDE (COMPLETED)
 
 ## Plugin Implementation (Completed)
 
-Implemented in `jellyfin-plugin-warmpool` (v1.14.1). Key changes:
+Implemented in `jellyfin-plugin-warmpool` (v1.14.2). Key changes:
 
 ### 1. `WarmProcessProvider.cs`
 ```csharp
-public void NotifyPlaylistConsumer(string mediaSourceId, EncodingProfile encodingProfile)
+public void NotifyPlaylistConsumer(string mediaSourceId, EncodingProfile encodingProfile, string? playSessionId)
 {
     var pool = EnsurePool();
     pool.IncrementConsumerCount(mediaSourceId, encodingProfile);
@@ -146,16 +146,16 @@ public void NotifyPlaylistConsumer(string mediaSourceId, EncodingProfile encodin
 
 | Component | Status | Notes |
 |-----------|--------|-------|
-| **Server Interface** | ✅ COMPLETE | `IHlsPlaylistProvider.NotifyPlaylistConsumer()` added |
-| **Server Implementation** | ✅ COMPLETE | `DynamicHlsController` calls `NotifyPlaylistConsumer()` |
+| **Server Interface** | ✅ COMPLETE | `IHlsPlaylistProvider.NotifyPlaylistConsumer(..., playSessionId)` added |
+| **Server Implementation** | ✅ COMPLETE | `DynamicHlsController` calls `NotifyPlaylistConsumer(..., playSessionId)` |
 | **Documentation** | ✅ COMPLETE | 3 comprehensive guides for plugin developer |
 | **Build & Push** | ✅ COMPLETE | All commits on `feature/fastchannelzapping` |
-| **Plugin Implementation** | ✅ COMPLETE | Implemented in `jellyfin-plugin-warmpool` v1.14.1 |
+| **Plugin Implementation** | ✅ COMPLETE | Implemented in `jellyfin-plugin-warmpool` v1.14.2 |
 | **Testing** | ⏳ REQUIRED | Test with updated plugin |
 
 ## How to Proceed
 
-1. **Build** the updated plugin (v1.14.1)
+1. **Build** the updated plugin (v1.14.2)
 2. **Test** warm HIT playback (should no longer freeze at 10s)
 3. **Verify** consumer count lifecycle in logs
 4. **Merge** to main when confident
@@ -185,9 +185,18 @@ A: Yes, but SessionEnded event will fire and mark the entry as orphaned. Orphane
 
 ---
 
-**Implementation Status**: Server-side COMPLETE, plugin-side COMPLETE (v1.14.1). Testing recommended.
+**Implementation Status**: Server-side COMPLETE, plugin-side COMPLETE (v1.14.2). Testing recommended.
 
 **Branch**: `feature/fastchannelzapping`  
 **Latest Commit**: `44b66d019`  
 **Ready for**: Plugin implementation and testing
+
+---
+
+## Additional Hardening (Playlist Freshness + Stream Health)
+
+- Added warm playlist freshness validation in `WarmFFmpegProcessPool` to detect upstream disconnects (e.g., TVheadend dropping the connection). A warm process is considered stale if its playlist file has not been updated within a safe window (default 30s, or `#EXT-X-TARGETDURATION * 3` when available).
+- Stale or missing playlists are now evicted both on warm-hit lookup and during the idle health check loop to avoid serving dead playlists.
+- Warm stream health checks now treat `EnableStreamSharing=false` as unhealthy so direct-stream entries that have stopped sharing are removed promptly.
+
 

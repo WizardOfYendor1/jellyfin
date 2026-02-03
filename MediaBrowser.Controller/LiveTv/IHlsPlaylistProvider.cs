@@ -59,9 +59,10 @@ public interface IHlsPlaylistProvider
     /// </summary>
     /// <param name="mediaSourceId">The media source ID.</param>
     /// <param name="encodingProfile">The encoding parameters of the playlist being served.</param>
+    /// <param name="playSessionId">The play session ID (if provided by the client).</param>
     /// <remarks>
     /// The provider is responsible for decrementing the consumer count when the stream ends
     /// (via PlaybackStopped events) or when a session ends (SessionEnded events).
     /// </remarks>
-    void NotifyPlaylistConsumer(string mediaSourceId, EncodingProfile encodingProfile);
+    void NotifyPlaylistConsumer(string mediaSourceId, EncodingProfile encodingProfile, string? playSessionId);
 }

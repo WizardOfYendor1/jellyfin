@@ -66,7 +66,7 @@ Added new method:
 /// The provider should increment its consumer count to prevent eviction while the client
 /// actively consumes segments.
 /// </summary>
-void NotifyPlaylistConsumer(string mediaSourceId, EncodingProfile encodingProfile);
+void NotifyPlaylistConsumer(string mediaSourceId, EncodingProfile encodingProfile, string? playSessionId);
 ```
 
 #### 2. Updated `DynamicHlsController`
@@ -74,14 +74,14 @@ void NotifyPlaylistConsumer(string mediaSourceId, EncodingProfile encodingProfil
 
 When a warm HIT is detected, the controller now:
 1. Gets the warm playlist content
-2. **Calls `hlsPlaylistProvider.NotifyPlaylistConsumer()`** to notify the plugin
+2. **Calls `hlsPlaylistProvider.NotifyPlaylistConsumer(..., playSessionId)`** to notify the plugin
 3. Returns the playlist to the client
 
 ```csharp
 if (playlistContent is not null)
 {
     // Notify the provider that a consumer is about to receive this playlist
-    hlsPlaylistProvider.NotifyPlaylistConsumer(mediaStateSourceId, encodingProfile);
+    hlsPlaylistProvider.NotifyPlaylistConsumer(mediaStateSourceId, encodingProfile, playSessionId);
     return Content(playlistContent, MimeTypes.GetMimeType("playlist.m3u8"));
 }
 ```
@@ -91,7 +91,7 @@ Created comprehensive documentation:
 - **`Consumer-Tracking-Fix.md`** — Complete plugin implementation guide
 - **`Warm-Pool-Freeze-RootCause-Analysis.md`** — Detailed root cause analysis and testing strategy
 
-### Plugin-Side Changes (COMPLETED — plugin v1.14.1)
+### Plugin-Side Changes (COMPLETED — plugin v1.14.2)
 
 The plugin now implements the consumer tracking mechanism. See `.claude/Consumer-Tracking-Fix.md` for the full implementation guide and test checklist.
 
@@ -99,10 +99,10 @@ The plugin now implements the consumer tracking mechanism. See `.claude/Consumer
 
 1. **Implement `NotifyPlaylistConsumer()` in `WarmProcessProvider`**
    ```csharp
-   public void NotifyPlaylistConsumer(string mediaSourceId, EncodingProfile encodingProfile)
+   public void NotifyPlaylistConsumer(string mediaSourceId, EncodingProfile encodingProfile, string? playSessionId)
    {
        var pool = EnsurePool();
-       pool.IncrementConsumerCount(mediaSourceId, encodingProfile);
+       pool.IncrementConsumerCount(mediaSourceId, encodingProfile, playSessionId);
    }
    ```
 
@@ -219,7 +219,7 @@ Entry.ConsumerCount = 0
 
 ### Plugin Repository (jellyfin-plugin-warmpool)
 
-**Changes implemented** (v1.14.1):
+**Changes implemented** (v1.14.2):
 - `WarmProcessProvider.cs` — implemented `NotifyPlaylistConsumer()`
 - `WarmFFmpegProcessPool.cs` — added `IncrementConsumerCount()`, `DecrementConsumerCount()`, `DecrementAllConsumersForMediaSource()`
 - `WarmPoolEntryPoint.cs` — calls `DecrementAllConsumersForMediaSource()` on `PlaybackStopped`
@@ -244,7 +244,7 @@ Entry.ConsumerCount = 0
 - All commits pushed to `feature/fastchannelzapping`
 
 ### ✅ Complete (Plugin Side)
-- Consumer tracking methods implemented (v1.14.1)
+- Consumer tracking methods implemented (v1.14.2)
 - Implementation guide retained for future reference
 
 ### 📋 Future Enhancements
@@ -280,6 +280,7 @@ Refer to:
 ---
 
 **Server-side implementation**: ✅ COMPLETE  
-**Plugin implementation**: ✅ COMPLETE (v1.14.1)  
+**Plugin implementation**: ✅ COMPLETE (v1.14.2)  
 **Status**: Ready for testing and verification
+
 

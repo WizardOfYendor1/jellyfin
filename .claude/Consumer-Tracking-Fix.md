@@ -16,21 +16,21 @@ In v1.7.0, the plugin removed the `ConsumerCount++` from `TryGetPlaylistPath()` 
 ### Phase 1: Server-Side (Jellyfin Core) — COMPLETED ✓
 - **Commit**: `002b00fd6` (feature/fastchannelzapping branch)
 - **Changes**:
-  1. Added `NotifyPlaylistConsumer(mediaSourceId, encodingProfile)` method to `IHlsPlaylistProvider` interface
+  1. Added `NotifyPlaylistConsumer(mediaSourceId, encodingProfile, playSessionId)` method to `IHlsPlaylistProvider` interface
   2. Updated `DynamicHlsController.GetLiveHlsStream()` to call `NotifyPlaylistConsumer()` AFTER a successful warm HIT
   3. The method is called BEFORE returning the playlist content to the client
 
-### Phase 2: Plugin-Side Implementation — COMPLETED (plugin v1.14.1)
+### Phase 2: Plugin-Side Implementation — COMPLETED (plugin v1.14.2)
 
 #### 2a. Update WarmProcessProvider.cs
 
 Implement the new `NotifyPlaylistConsumer()` method:
 
 ```csharp
-public void NotifyPlaylistConsumer(string mediaSourceId, EncodingProfile encodingProfile)
+public void NotifyPlaylistConsumer(string mediaSourceId, EncodingProfile encodingProfile, string? playSessionId)
 {
     var pool = EnsurePool();
-    pool.IncrementConsumerCount(mediaSourceId, encodingProfile);
+    pool.IncrementConsumerCount(mediaSourceId, encodingProfile, playSessionId);
 }
 ```
 
@@ -44,7 +44,7 @@ New public method that increments ConsumerCount for the matching pool entry:
 /// Called when the server is serving a warm HIT to a client.
 /// The plugin must decrement this count in response to PlaybackStopped or SessionEnded events.
 /// </summary>
-public void IncrementConsumerCount(string mediaSourceId, EncodingProfile encodingProfile)
+public void IncrementConsumerCount(string mediaSourceId, EncodingProfile encodingProfile, string? playSessionId)
 {
     var encodingProfileHash = encodingProfile.ComputeHash();
     var poolKey = GetPoolKey(mediaSourceId, encodingProfileHash);
@@ -73,7 +73,20 @@ private void OnPlaybackStopped(object? sender, PlaybackStopEventArgs e)
 {
     // ... existing logic ...
 
-    if (!string.IsNullOrEmpty(e.MediaSourceId))
+    var pool = WarmPoolManager.ProcessPoolInstance;
+    if (pool is null)
+    {
+        return;
+    }
+
+    if (!string.IsNullOrEmpty(e.PlaySessionId))
+    {
+        if (!pool.TryDecrementConsumerByPlaySession(e.PlaySessionId))
+        {
+            pool.DecrementAllConsumersForMediaSource(e.MediaSourceId);
+        }
+    }
+    else if (!string.IsNullOrEmpty(e.MediaSourceId))
     {
         // Decrement all pool entries matching this mediaSourceId.
         // This handles the case where a client switched encoding profiles
@@ -218,3 +231,4 @@ To avoid the "decrement all for mediaSourceId" heuristic, the server could be ex
 - **Plugin**: `WarmProcessProvider.cs`
 - **Plugin**: `WarmFFmpegProcessPool.cs`
 - **Plugin**: `WarmPoolEntryPoint.cs`
+
