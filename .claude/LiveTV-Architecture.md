@@ -861,6 +861,7 @@ When multiple clients request the same channel with the same encoding parameters
 3. **Encoding parameter matching** is implemented — composite key `{mediaSourceId}|{encodingProfileHash}` ensures warm hits only occur when channel AND transcoding profile match
 4. **ConsumerCount pattern** is essential for preventing premature stream/tuner closure
 5. **Pool size** limits resource consumption — each warm process uses CPU, memory, bandwidth, and a tuner slot
+   - For generic IPTV, the effective limit is `min(PoolSize - 1, TunerCount - 1)` per tuner host, ensuring one slot remains free and the host’s stream limit is respected
 6. **Multiple warm pool providers** are supported (first-to-adopt wins), allowing different strategies
 7. **Direct streaming optimization** (Phase 3) is implemented via `ILiveStreamProvider` — keeps `ILiveStream` connections alive in `MediaSourceManager`
 8. **Session awareness** (Phase 6) — pool entries track their owning session; orphaned entries are preferentially evicted; per-user fairness prevents any single user from monopolizing pool slots

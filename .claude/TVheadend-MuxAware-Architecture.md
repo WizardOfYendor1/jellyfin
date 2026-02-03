@@ -79,6 +79,7 @@ For **IPTV sources** in TVheadend:
 - TVheadend can still multiplex if the source provides multi-program transport streams
 - Most IPTV providers send **one service per URL** (single-program transport stream)
 - **Implication**: IPTV channels usually have 1:1 mux-to-channel mapping
+- **Warm pool limit (generic IPTV)**: enforce `min(PoolSize - 1, TunerCount - 1)` per tuner host and evict within the same host to avoid exhausting provider stream limits
 
 **Important**: The mux-aware architecture is most critical for **OTA (over-the-air)** and **cable/satellite** sources where true RF multiplexing occurs. For pure IPTV, the benefit is reduced but the architecture still helps with prioritization.
 
@@ -366,7 +367,7 @@ public class TVheadendMuxMapper
 Source: [TVheadend JSON API](https://docs.tvheadend.org/documentation/development/json-api/api-description/mpegts)
 
 TVheadend exposes tuner (adapter) status via:
-- **Endpoint**: `/api/hardware/input/grid`
+- **Endpoint**: `/api/status/inputs` (fallback: `/api/hardware/input/grid` for older builds)
 - **Response**: Array of tuner objects with fields:
   - `uuid`: Tuner UUID
   - `name`: Tuner name (e.g., "Hauppauge WinTV-dualHD DVB #0")
@@ -392,7 +393,7 @@ var isTunerPressure = freeTunersCount == 0;
 
 #### Dynamic Eviction Strategy
 
-**Trigger**: Poll `/api/hardware/input/grid` every 10 seconds (configurable).
+**Trigger**: Poll `/api/status/inputs` every 10 seconds (configurable; fallback to `/api/hardware/input/grid` if needed).
 
 **Logic**:
 1. **No pressure** (`freeTunersCount > 0`):
@@ -433,7 +434,7 @@ public class TVheadendTunerMonitor : IHostedService
 
     private async void CheckTunerPressure(object? state)
     {
-        var tuners = await FetchTunerStatusAsync();  // GET /api/hardware/input/grid
+        var tuners = await FetchTunerStatusAsync();  // GET /api/status/inputs (fallback: /api/hardware/input/grid)
         var freeTuners = tuners.Count(t => t.Enabled && string.IsNullOrEmpty(t.CurrentMux));
 
         if (freeTuners == 0)
@@ -777,7 +778,7 @@ public class MuxHeuristicGrouper
 **Goal**: Dynamically evict only when TVheadend tuners are actually full.
 
 **Changes**:
-1. **TVheadendTunerMonitor.cs** (new file): Background service polling `/api/hardware/input/grid`
+1. **TVheadendTunerMonitor.cs** (new file): Background service polling `/api/status/inputs` (fallback: `/api/hardware/input/grid`)
 2. **PluginServiceRegistrator.cs**: Register `TVheadendTunerMonitor` as `IHostedService`
 3. **WarmPoolManager.cs**: Add static property:
    ```csharp
@@ -938,7 +939,7 @@ Source: [TVheadend JSON API Docs](https://docs.tvheadend.org/documentation/devel
 
 #### Get Tuner/Adapter Status
 
-**Endpoint**: `GET /api/hardware/input/grid`
+**Endpoint**: `GET /api/status/inputs` (fallback: `/api/hardware/input/grid`)
 
 **Response**:
 ```json
@@ -1093,7 +1094,7 @@ Source: [HTSP Documentation](https://docs.tvheadend.org/documentation/developmen
    - **Pool**: 25 streams, 4 muxes, 4 tuners
 
 3. **T=22min**: User requests channel 48.1 (Mux E, NEW):
-   - **Tuner pressure check**: Poll `/api/hardware/input/grid` → 0 free tuners
+   - **Tuner pressure check**: Poll `/api/status/inputs` → 0 free tuners
    - `IsTunerPressure = true`
    - **Mux-aware eviction triggered** (even though pool < 30):
      - Score all muxes, evict lowest (Mux D with 2 streams)
@@ -1606,7 +1607,7 @@ private async Task RefreshProviderDetectionAsync()
 ### Medium-Term Enhancements (Phase 3)
 
 5. **Add tuner pressure monitoring**:
-   - Poll `/api/hardware/input/grid` every 10s
+   - Poll `/api/status/inputs` every 10s (fallback to `/api/hardware/input/grid` if needed)
    - Set `IsTunerPressure` flag when all tuners busy
    - Only evict muxes when pressure detected
    - **Risk**: Low (read-only polling, optional feature)
