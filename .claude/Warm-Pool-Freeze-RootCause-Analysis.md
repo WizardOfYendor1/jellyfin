@@ -142,7 +142,7 @@ DynamicHlsController.GetLiveHlsStream()
 TryGetPlaylistContentAsync() found match
    ↓
    ├─→ Playlist returned
-   └─→ NotifyPlaylistConsumer() called  ← **Server-side callback**
+   └─→ NotifyPlaylistConsumer(..., playSessionId) called  ← **Server-side callback**
        ↓
        WarmProcessProvider.NotifyPlaylistConsumer()
        ↓
@@ -158,7 +158,7 @@ TryGetPlaylistContentAsync() found match
 ```
 
 Why this works:
-1. `NotifyPlaylistConsumer()` is called **immediately after** the server decides to send a warm playlist
+1. `NotifyPlaylistConsumer(..., playSessionId)` is called **immediately after** the server decides to send a warm playlist
 2. The plugin **cannot miss** this notification (it's a direct method call)
 3. The increment happens **before** the client can start consuming (it's synchronous)
 4. The decrement happens when playback actually stops (via event listener)
@@ -171,20 +171,20 @@ Why this works:
 ### Server-Side (Jellyfin)
 **Commit**: `db5d84399` (feature/fastchannelzapping)
 
-1. **Add `NotifyPlaylistConsumer()` to `IHlsPlaylistProvider`**
+1. **Add `NotifyPlaylistConsumer(..., playSessionId)` to `IHlsPlaylistProvider`**
    - Contract: tells provider a warm playlist is being served to a client
    - Provider must increment internal consumer count
 
-2. **Call `NotifyPlaylistConsumer()` in `DynamicHlsController`**
+2. **Call `NotifyPlaylistConsumer(..., playSessionId)` in `DynamicHlsController`**
    - After successful warm HIT, before returning playlist to client
    - Ensures provider knows a consumer is about to receive the playlist
 
 3. **Documentation**: `Consumer-Tracking-Fix.md` with implementation guide
 
-### Plugin-Side (jellyfin-plugin-warmpool) — COMPLETED (v1.14.1)
+### Plugin-Side (jellyfin-plugin-warmpool) — COMPLETED (v1.14.2)
 **Implemented changes**:
 
-1. **Implement `NotifyPlaylistConsumer()` in `WarmProcessProvider`**
+1. **Implement `NotifyPlaylistConsumer(..., playSessionId)` in `WarmProcessProvider`**
    - Delegates to pool's `IncrementConsumerCount()`
 
 2. **Add `IncrementConsumerCount()` to `WarmFFmpegProcessPool`**
@@ -316,4 +316,5 @@ Why this works:
    - Direct streaming uses `ILiveStreamProvider`, not `IHlsPlaylistProvider`
    - Phase 3 (Direct Stream Warm Pool) already implements this for direct streams
    - **No change needed**: this fix only applies to HLS warm pools
+
 

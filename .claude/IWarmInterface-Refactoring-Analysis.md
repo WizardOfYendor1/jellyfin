@@ -133,7 +133,8 @@ public interface IHlsPlaylistProvider
 
     void NotifyPlaylistConsumer(
         string mediaSourceId,
-        EncodingProfile encodingProfile);
+        EncodingProfile encodingProfile,
+        string? playSessionId);
 }
 ```
 

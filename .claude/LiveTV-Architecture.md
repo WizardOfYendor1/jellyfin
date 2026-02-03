@@ -522,14 +522,14 @@ public interface IHlsPlaylistProvider
         EncodingProfile encodingProfile,
         string targetPlaylistPath,
         CancellationToken cancellationToken);
-    void NotifyPlaylistConsumer(string mediaSourceId, EncodingProfile encodingProfile);
+    void NotifyPlaylistConsumer(string mediaSourceId, EncodingProfile encodingProfile, string? playSessionId);
 }
 ```
 
 `EncodingProfile` (`MediaBrowser.Controller/LiveTv/EncodingProfile.cs`) carries: `VideoCodec`, `AudioCodec`, `VideoBitrate`, `AudioBitrate`, `Width`, `Height`, `AudioChannels`. Its `ComputeHash()` method produces a deterministic MD5 hash for pool key generation.
 
 - **`TryGetPlaylistContentAsync`**: Called before FFmpeg cold start. Returns playlist content and publishes it to the target path if a warm process exists for the requested media source AND encoding profile.
-- **`NotifyPlaylistConsumer`**: Called immediately before returning a warm playlist so the provider can increment consumer count.
+- **`NotifyPlaylistConsumer`**: Called immediately before returning a warm playlist so the provider can increment consumer count (playSessionId is provided when available for precise tracking).
 - **`TryGetPlaylist`**: Legacy/compatibility lookup (not used by the server path).
 - **`TryAdoptProcess`**: Called when killing a transcoding job. Returns true if the provider takes ownership of the FFmpeg process.
 
@@ -545,7 +545,7 @@ In `GetLiveHlsStream()`, the warm pool check is **guarded by the playlist-exists
    a. Check if media source is infinite stream (LiveTV)
    b. For each IHlsPlaylistProvider:
       → TryGetPlaylistContentAsync(mediaSourceId, encodingProfile, playlistPath)
-      → If HIT: NotifyPlaylistConsumer(...) and return cached playlist content
+      → If HIT: NotifyPlaylistConsumer(..., playSessionId) and return cached playlist content
       → If MISS: proceed to cold start FFmpeg
    c. Acquire transcode lock, start FFmpeg
 ```

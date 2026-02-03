@@ -57,7 +57,7 @@ This document reviews the current warm pool implementation across both repositor
 - **Known issue documented**: HEAD request in `M3UTunerHost.GetChannelStream()` causes double TVheadend subscription for extensionless URLs. Harmless (quick unsubscribe) but could be optimized in the future.
 - Server changes: 2 files (new interface + retry logic in MediaSourceManager)
 - Plugin changes: 4 files (new TunerResourceProvider + EvictForTunerReleaseAsync on both pools + DI registration)
-- Plugin version bumped to 1.14.1
+- Plugin version bumped to 1.14.2
 - All changes compile successfully with 0 errors, 0 warnings (server + plugin)
 
 **All phases complete.** The warm pool plugin now provides end-to-end fast LiveTV channel zapping with automatic management, metrics, tuner resource release, and administration
@@ -118,14 +118,14 @@ The key insight: **FFmpeg is the bottleneck**, not the TVHeadend connection itse
 
 1. **`IHlsPlaylistProvider`** interface in `MediaBrowser.Controller/LiveTv/`:
    - `TryGetPlaylistContentAsync(mediaSourceId, encodingProfile, targetPlaylistPath, cancellationToken)` — warm-hit lookup + publish
-   - `NotifyPlaylistConsumer(mediaSourceId, encodingProfile)` — consumer tracking on warm HIT
+   - `NotifyPlaylistConsumer(mediaSourceId, encodingProfile, playSessionId)` — consumer tracking on warm HIT
    - `TryAdoptProcess(mediaSourceId, encodingProfile, playlistPath, process, liveStreamId)` — adoption
 
 2. **`DynamicHlsController.GetLiveHlsStream()`** — checks warm pool before FFmpeg cold start
 
 3. **`TranscodeManager.KillTranscodingJob()`** — offers process to warm pool before killing; bumps `ConsumerCount` on adoption
 
-### Plugin-side (jellyfin-plugin-warmpool, v1.14.1)
+### Plugin-side (jellyfin-plugin-warmpool, v1.14.2)
 
 - `WarmProcessProvider` — implements `IHlsPlaylistProvider`
 - `WarmFFmpegProcessPool` — ConcurrentDictionary keyed by `mediaSourceId + encodingProfileHash`
@@ -217,7 +217,8 @@ public interface IHlsPlaylistProvider
 
     void NotifyPlaylistConsumer(
         string mediaSourceId,
-        EncodingProfile encodingProfile);
+        EncodingProfile encodingProfile,
+        string? playSessionId);
 }
 ```
 
@@ -586,4 +587,5 @@ This is refinement, not essential for the core feature. The orphan flag from `Se
 ---
 
 *This plan should be updated as implementation progresses and new findings emerge.*
+
 

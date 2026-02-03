@@ -129,7 +129,7 @@ These are independent cleanup paths — both run even if the other has side effe
 `IHlsPlaylistProvider` (`MediaBrowser.Controller/LiveTv/IHlsPlaylistProvider.cs`) allows plugins to keep FFmpeg processes alive for fast LiveTV channel zapping:
 
 - `TryGetPlaylistContentAsync(mediaSourceId, encodingProfile, targetPlaylistPath, cancellationToken)` — called by `DynamicHlsController` only when no playlist exists (i.e., FFmpeg cold start is needed)
-- `NotifyPlaylistConsumer(mediaSourceId, encodingProfile)` — called by `DynamicHlsController` immediately before returning a warm playlist so the provider can increment consumer count
+- `NotifyPlaylistConsumer(mediaSourceId, encodingProfile, playSessionId)` — called by `DynamicHlsController` immediately before returning a warm playlist so the provider can increment consumer count
 - `TryAdoptProcess(mediaSourceId, encodingProfile, playlistPath, ffmpegProcess, liveStreamId)` — called by `TranscodeManager` when killing a job
 - `TryGetPlaylist(mediaSourceId, encodingProfile, out playlistPath)` — legacy/compatibility lookup (not used by the server path)
 
@@ -258,7 +258,7 @@ Always verify the build succeeds before committing to avoid pushing broken code.
 - **Session-aware eviction** (v1.8.0): Each pool entry tracks `OwnerSessionId` and `IsOrphaned`. When a user's session ends (`SessionEnded` event from WebSocket close / app exit), their entries are marked orphaned (`-10.0` penalty). Per-user fairness penalty (`-ownerSlots/totalSlots`) prevents any single user from monopolizing the pool. Orphaned entries remain available if no demand exists (lazy eviction)
 - **Session info pipeline**: `WarmPoolEntryPoint.OnPlaybackStopped` records `{mediaSourceId → sessionId}` via `WarmPoolManager.RecordRecentStop()`. During adoption (same pipeline), the pool calls `ConsumeRecentStop()` to tag the entry. No server interface changes needed
 - **Pool size**: Configurable max warm processes (default 3)
-- **Current version**: 1.14.1
+- **Current version**: 1.14.2
 
 ### Warm Pool Population: Automatic vs Manual
 
