@@ -21,7 +21,7 @@ DynamicHlsController.GetLiveHlsStream() called
    ↓
 Warm pool check finds a matching FFmpeg process with pre-buffered segments
    ↓
-TryGetWarmPlaylistContentAsync() returns the playlist content
+TryGetPlaylistContentAsync() returns the playlist content
    ↓
 Playlist returned to client; ConsumerCount = 0 ❌ (should be 1)
    ↓
@@ -54,7 +54,7 @@ From `.claude/WarmPool-ChangePlan.md`:
 
 By removing the `ConsumerCount++`, the plugin prevented the lock-up but created a **new vulnerability**:
 
-1. Warm playlist hit occurs → `TryGetWarmPlaylistContentAsync()` is called
+1. Warm playlist hit occurs → `TryGetPlaylistContentAsync()` is called
 2. `TryGetPlaylistPath()` updates `LastAccessTime` but NOT `ConsumerCount`
 3. Client receives playlist and starts requesting segments
 4. Idle timer runs every 60 seconds and checks which processes to evict
@@ -139,7 +139,7 @@ New approach:
 ```
 DynamicHlsController.GetLiveHlsStream()
    ↓
-TryGetWarmPlaylistContentAsync() found match
+TryGetPlaylistContentAsync() found match
    ↓
    ├─→ Playlist returned
    └─→ NotifyPlaylistConsumer() called  ← **Server-side callback**
@@ -181,14 +181,14 @@ Why this works:
 
 3. **Documentation**: `Consumer-Tracking-Fix.md` with implementation guide
 
-### Plugin-Side (jellyfin-plugin-warmpool)
-**Required changes**:
+### Plugin-Side (jellyfin-plugin-warmpool) — COMPLETED (v1.14.1)
+**Implemented changes**:
 
 1. **Implement `NotifyPlaylistConsumer()` in `WarmProcessProvider`**
    - Delegates to pool's `IncrementConsumerCount()`
 
 2. **Add `IncrementConsumerCount()` to `WarmFFmpegProcessPool`**
-   - Atomically increments the pool entry's `ConsumerCount`
+   - Increments the pool entry's `ConsumerCount`
 
 3. **Add `DecrementConsumerCount()` and `DecrementAllConsumersForMediaSource()`**
    - Called from `WarmPoolEntryPoint.OnPlaybackStopped()` listener
@@ -316,3 +316,4 @@ Why this works:
    - Direct streaming uses `ILiveStreamProvider`, not `IHlsPlaylistProvider`
    - Phase 3 (Direct Stream Warm Pool) already implements this for direct streams
    - **No change needed**: this fix only applies to HLS warm pools
+

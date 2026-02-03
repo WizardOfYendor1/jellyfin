@@ -27,7 +27,7 @@ The v1.7.0 fix relied on `LastAccessTime` updates alone for eviction protection.
 
 ### Server-Side (COMPLETED ✓)
 
-**4 commits pushed to `feature/fastchannelzapping` branch:**
+**5 commits pushed to `feature/fastchannelzapping` branch:**
 
 1. **`002b00fd6`**: Add `NotifyPlaylistConsumer()` method to `IHlsPlaylistProvider`
    - New interface contract for consumer tracking notification
@@ -56,7 +56,7 @@ SERVER SIDE (COMPLETED)
 │
 ├─ DynamicHlsController detects warm HIT
 │
-├─ Calls TryGetWarmPlaylistContentAsync() → returns content
+├─ Calls TryGetPlaylistContentAsync() → returns content
 │
 ├─ Calls NotifyPlaylistConsumer(mediaSourceId, encodingProfile)
 │   └─→ Plugin increments ConsumerCount
@@ -64,7 +64,7 @@ SERVER SIDE (COMPLETED)
 └─ Returns playlist to client
    [Entry now protected from eviction]
 
-PLUGIN SIDE (REQUIRED)
+PLUGIN SIDE (COMPLETED)
 │
 ├─ WarmProcessProvider.NotifyPlaylistConsumer()
 │   └─→ Calls pool.IncrementConsumerCount()
@@ -94,6 +94,10 @@ PLUGIN SIDE (REQUIRED)
 |------|--------|--------|
 | `MediaBrowser.Controller/LiveTv/IHlsPlaylistProvider.cs` | Add `NotifyPlaylistConsumer()` | Interface contract for consumer tracking |
 | `Jellyfin.Api/Controllers/DynamicHlsController.cs` | Call `NotifyPlaylistConsumer()` on warm HIT | Notifies plugin when serving warm playlist |
+| `jellyfin-plugin-warmpool/WarmProcessProvider.cs` | Implement `NotifyPlaylistConsumer()` | Increment consumer count on warm HIT |
+| `jellyfin-plugin-warmpool/WarmFFmpegProcessPool.cs` | Add consumer count increment/decrement helpers | Prevent eviction during active consumption |
+| `jellyfin-plugin-warmpool/WarmPoolEntryPoint.cs` | Decrement consumers on `PlaybackStopped` | Release eviction protection when playback ends |
+| `jellyfin-plugin-warmpool/Jellyfin.Plugin.WarmPool.csproj` | Bump version to 1.14.1 | Bug-fix release |
 
 ### All Changes
 - ✅ Compiled successfully (0 errors, 0 warnings)
@@ -101,9 +105,9 @@ PLUGIN SIDE (REQUIRED)
 - ✅ Committed to `feature/fastchannelzapping` branch
 - ✅ Pushed to GitHub `origin/feature/fastchannelzapping`
 
-## What Needs to Be Done
+## Plugin Implementation (Completed)
 
-The plugin implementation is straightforward and well-documented. Required changes:
+Implemented in `jellyfin-plugin-warmpool` (v1.14.1). Key changes:
 
 ### 1. `WarmProcessProvider.cs`
 ```csharp
@@ -126,7 +130,7 @@ public void NotifyPlaylistConsumer(string mediaSourceId, EncodingProfile encodin
 - Ensure idle timeout logic checks `ConsumerCount > 0` before evicting
 - Ensure LRU eviction logic respects `ConsumerCount > 0`
 
-**Estimated effort**: 2-3 hours implementation + testing
+**Estimated effort**: 2-3 hours implementation + testing (implementation completed; testing still recommended)
 
 ## Testing Checklist
 
@@ -146,16 +150,15 @@ public void NotifyPlaylistConsumer(string mediaSourceId, EncodingProfile encodin
 | **Server Implementation** | ✅ COMPLETE | `DynamicHlsController` calls `NotifyPlaylistConsumer()` |
 | **Documentation** | ✅ COMPLETE | 3 comprehensive guides for plugin developer |
 | **Build & Push** | ✅ COMPLETE | All commits on `feature/fastchannelzapping` |
-| **Plugin Implementation** | ⏳ REQUIRED | See `.claude/Consumer-Tracking-Fix.md` |
+| **Plugin Implementation** | ✅ COMPLETE | Implemented in `jellyfin-plugin-warmpool` v1.14.1 |
 | **Testing** | ⏳ REQUIRED | Test with updated plugin |
 
 ## How to Proceed
 
-1. **Read** `.claude/Consumer-Tracking-Fix.md` (implementation guide)
-2. **Implement** the 4 plugin methods in WarmProcessProvider and WarmFFmpegProcessPool
-3. **Test** warm HIT playback (should no longer freeze at 10s)
-4. **Verify** consumer count lifecycle in logs
-5. **Merge** to main when confident
+1. **Build** the updated plugin (v1.14.1)
+2. **Test** warm HIT playback (should no longer freeze at 10s)
+3. **Verify** consumer count lifecycle in logs
+4. **Merge** to main when confident
 
 ## Key Insights
 
@@ -182,8 +185,9 @@ A: Yes, but SessionEnded event will fire and mark the entry as orphaned. Orphane
 
 ---
 
-**Implementation Status**: Server-side COMPLETE, ready for plugin developer to implement consumer tracking.
+**Implementation Status**: Server-side COMPLETE, plugin-side COMPLETE (v1.14.1). Testing recommended.
 
 **Branch**: `feature/fastchannelzapping`  
 **Latest Commit**: `44b66d019`  
 **Ready for**: Plugin implementation and testing
+

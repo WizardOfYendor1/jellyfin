@@ -7,7 +7,7 @@ This document reviews the current warm pool implementation across both repositor
 **Phase 1 (Encoding Parameter Matching) - COMPLETED** ✓
 
 - Created `EncodingProfile` class in `MediaBrowser.Controller/LiveTv/EncodingProfile.cs`
-- Extended `IWarmProcessProvider` interface with encoding profile parameters
+- Extended `IHlsPlaylistProvider` interface with encoding profile parameters
 - Updated `DynamicHlsController` to compute and pass encoding profile on warm pool check
 - Updated `TranscodeManager` to store encoding profile in `TranscodingJob` and pass on adoption
 - Updated plugin `WarmProcessProvider`, `WarmProcessInfo`, and `WarmFFmpegProcessPool` to key by composite `mediaSourceId + encodingProfileHash`
@@ -24,10 +24,10 @@ This document reviews the current warm pool implementation across both repositor
 
 **Phase 3 (Direct Stream Warm Pool) - COMPLETED** ✓
 
-- **3a: IWarmStreamProvider interface** — Created `MediaBrowser.Controller/LiveTv/IWarmStreamProvider.cs` with `TryGetWarmStream(mediaSourceId, out ILiveStream?)` and `TryAdoptStream(id, ILiveStream)`. Includes full XML documentation covering adoption flow, reuse flow via stream sharing, and eviction responsibilities.
-- **3b: Adoption hook in CloseLiveStream** — Modified `MediaSourceManager.CloseLiveStream` to iterate `IEnumerable<IWarmStreamProvider>` when `ConsumerCount <= 0`. If a provider adopts the stream, ConsumerCount is bumped back to 1 and the stream stays alive in `_openStreams`. Added constructor injection of `IEnumerable<IWarmStreamProvider>`.
+- **3a: ILiveStreamProvider interface** — Created `MediaBrowser.Controller/LiveTv/ILiveStreamProvider.cs` with `TryGetStream(mediaSourceId, out ILiveStream?)` and `TryAdoptStream(id, ILiveStream)`. Includes full XML documentation covering adoption flow, reuse flow via stream sharing, and eviction responsibilities.
+- **3b: Adoption hook in CloseLiveStream** — Modified `MediaSourceManager.CloseLiveStream` to iterate `IEnumerable<ILiveStreamProvider>` when `ConsumerCount <= 0`. If a provider adopts the stream, ConsumerCount is bumped back to 1 and the stream stays alive in `_openStreams`. Added constructor injection of `IEnumerable<ILiveStreamProvider>`.
 - **3c: No server change needed** — Existing stream sharing in `DefaultLiveTvService.GetChannelStreamWithDirectStreamProvider` handles reuse automatically. It searches `currentLiveStreams` (which comes from `_openStreams.Values`) by `OriginalStreamId`. Since the warm-adopted stream remains in `_openStreams` with `EnableStreamSharing = true`, it is found and reused when the same channel is tuned again.
-- **3d: Plugin WarmStreamPool** — Created `WarmStreamInfo.cs`, `WarmStreamPool.cs`, and `WarmStreamProvider.cs` in the plugin. Pool features: idle timeout eviction (60s timer, configurable `IdleTimeoutMinutes`), LRU eviction on pool full, re-adoption prevention via `_evictingStreamIds` set during eviction-triggered `CloseLiveStream` callbacks. Registered `IWarmStreamProvider` in `PluginServiceRegistrator`. Updated `WarmPoolManager` to manage both process and stream pool singletons.
+- **3d: Plugin WarmStreamPool** — Created `WarmStreamInfo.cs`, `WarmStreamPool.cs`, and `WarmStreamProvider.cs` in the plugin. Pool features: idle timeout eviction (60s timer, configurable `IdleTimeoutMinutes`), LRU eviction on pool full, re-adoption prevention via `_evictingStreamIds` set during eviction-triggered `CloseLiveStream` callbacks. Registered `ILiveStreamProvider` in `PluginServiceRegistrator`. Updated `WarmPoolManager` to manage both process and stream pool singletons.
 - All changes compile successfully with 0 errors, 0 warnings (server + plugin)
 
 **Phase 4 (Automatic Pool Management) - COMPLETED** ✓
@@ -57,7 +57,7 @@ This document reviews the current warm pool implementation across both repositor
 - **Known issue documented**: HEAD request in `M3UTunerHost.GetChannelStream()` causes double TVheadend subscription for extensionless URLs. Harmless (quick unsubscribe) but could be optimized in the future.
 - Server changes: 2 files (new interface + retry logic in MediaSourceManager)
 - Plugin changes: 4 files (new TunerResourceProvider + EvictForTunerReleaseAsync on both pools + DI registration)
-- Plugin version bumped to 1.14.0
+- Plugin version bumped to 1.14.1
 - All changes compile successfully with 0 errors, 0 warnings (server + plugin)
 
 **All phases complete.** The warm pool plugin now provides end-to-end fast LiveTV channel zapping with automatic management, metrics, tuner resource release, and administration
@@ -116,18 +116,19 @@ The key insight: **FFmpeg is the bottleneck**, not the TVHeadend connection itse
 
 4 commits adding minimal hook interfaces:
 
-1. **`IWarmProcessProvider`** interface in `MediaBrowser.Controller/LiveTv/`:
-   - `TryGetWarmPlaylist(mediaSourceId, out playlistPath)` — lookup by `state.MediaSource.Id`
-   - `TryAdoptProcess(mediaSourceId, playlistPath, process, liveStreamId)` — adoption
+1. **`IHlsPlaylistProvider`** interface in `MediaBrowser.Controller/LiveTv/`:
+   - `TryGetPlaylistContentAsync(mediaSourceId, encodingProfile, targetPlaylistPath, cancellationToken)` — warm-hit lookup + publish
+   - `NotifyPlaylistConsumer(mediaSourceId, encodingProfile)` — consumer tracking on warm HIT
+   - `TryAdoptProcess(mediaSourceId, encodingProfile, playlistPath, process, liveStreamId)` — adoption
 
 2. **`DynamicHlsController.GetLiveHlsStream()`** — checks warm pool before FFmpeg cold start
 
 3. **`TranscodeManager.KillTranscodingJob()`** — offers process to warm pool before killing; bumps `ConsumerCount` on adoption
 
-### Plugin-side (jellyfin-plugin-warmpool, v1.3.0)
+### Plugin-side (jellyfin-plugin-warmpool, v1.14.1)
 
-- `WarmProcessProvider` — implements `IWarmProcessProvider`
-- `WarmFFmpegProcessPool` — ConcurrentDictionary keyed by `mediaSourceId`
+- `WarmProcessProvider` — implements `IHlsPlaylistProvider`
+- `WarmFFmpegProcessPool` — ConcurrentDictionary keyed by `mediaSourceId + encodingProfileHash`
 - Automatic adoption from `TranscodeManager` on playback stop
 - Proper live stream lifecycle: stores `liveStreamId`, calls `CloseLiveStream()` on eviction
 - REST API for manual management (`/WarmPool/Start`, `/Stop`, `/Status`)
@@ -135,6 +136,8 @@ The key insight: **FFmpeg is the bottleneck**, not the TVHeadend connection itse
 ---
 
 ## Issues and Gaps Identified
+
+**Note**: The issues below are retained for historical context. They are addressed by the completed phases listed at the top of this document.
 
 ### Issue 1: Encoding Parameter Matching (Critical)
 
@@ -177,7 +180,7 @@ When pool is full, `AdoptProcess()` declines. No eviction of oldest/least-used e
 
 ### Issue 6: Adopted Playlist Path vs New Client's Expected Path
 
-When FFmpeg is adopted, its `OutputFilePath` was `MD5("{MediaPath}-{UserAgent}-{DeviceId}-{PlaySessionId}")` from the original client. A new client would compute a different `OutputFilePath` (different PlaySessionId, DeviceId, UserAgent). The warm pool bypasses this by returning its own playlist path directly in `TryGetWarmPlaylist()`, which works. But the HLS segment URLs inside that playlist may reference paths that don't match what the new client expects from Jellyfin's routing.
+When FFmpeg is adopted, its `OutputFilePath` was `MD5("{MediaPath}-{UserAgent}-{DeviceId}-{PlaySessionId}")` from the original client. A new client would compute a different `OutputFilePath` (different PlaySessionId, DeviceId, UserAgent). The warm pool bypasses this by returning warm playlist content via `TryGetPlaylistContentAsync()`, which publishes to the target path the server expects. But the HLS segment URLs inside that playlist may reference paths that don't match what the new client expects from Jellyfin's routing.
 
 ---
 
@@ -187,90 +190,73 @@ When FFmpeg is adopted, its `OutputFilePath` was `MD5("{MediaPath}-{UserAgent}-{
 
 This is the highest priority because without it, warm hits can serve wrong-format content.
 
-#### 1a. Extend IWarmProcessProvider Interface (Server)
+#### 1a. Extend IHlsPlaylistProvider Interface (Server) — COMPLETED
 
-Add encoding parameters to both methods:
+Implemented using the shared `EncodingProfile` DTO plus a warm-hit callback:
 
 ```csharp
-public interface IWarmProcessProvider
+public interface IHlsPlaylistProvider
 {
-    bool TryGetWarmPlaylist(
+    bool TryGetPlaylist(
         string mediaSourceId,
-        string? videoCodec,
-        string? audioCodec,
-        int? videoBitrate,
-        int? audioBitrate,
-        int? width,
-        int? height,
+        EncodingProfile encodingProfile,
         out string? playlistPath);
 
     bool TryAdoptProcess(
         string mediaSourceId,
+        EncodingProfile encodingProfile,
         string playlistPath,
         Process ffmpegProcess,
-        string? liveStreamId,
-        string? videoCodec,
-        string? audioCodec,
-        int? videoBitrate,
-        int? audioBitrate,
-        int? width,
-        int? height);
+        string? liveStreamId);
+
+    Task<string?> TryGetPlaylistContentAsync(
+        string mediaSourceId,
+        EncodingProfile encodingProfile,
+        string targetPlaylistPath,
+        CancellationToken cancellationToken);
+
+    void NotifyPlaylistConsumer(
+        string mediaSourceId,
+        EncodingProfile encodingProfile);
 }
 ```
 
-Alternatively, pass a simple DTO/record to avoid parameter bloat:
+`EncodingProfile` serves as the compact DTO for codec/bitrate/resolution parameters.
+
+**Files**: `MediaBrowser.Controller/LiveTv/IHlsPlaylistProvider.cs`
+
+#### 1b. Pass Encoding Parameters at Check and Adoption (Server) — COMPLETED
+
+In `DynamicHlsController.GetLiveHlsStream()`, build the profile from `StreamState` and use the async warm-hit lookup:
 
 ```csharp
-public record WarmPoolEncodingProfile(
-    string? VideoCodec,
-    string? AudioCodec,
-    int? VideoBitrate,
-    int? AudioBitrate,
-    int? Width,
-    int? Height);
-
-public interface IWarmProcessProvider
-{
-    bool TryGetWarmPlaylist(string mediaSourceId, WarmPoolEncodingProfile profile, out string? playlistPath);
-    bool TryAdoptProcess(string mediaSourceId, string playlistPath, Process ffmpegProcess,
-                         string? liveStreamId, WarmPoolEncodingProfile profile);
-}
-```
-
-**Files**: `MediaBrowser.Controller/LiveTv/IWarmProcessProvider.cs`
-
-#### 1b. Pass Encoding Parameters at Check and Adoption (Server)
-
-In `DynamicHlsController.GetLiveHlsStream()`, build the profile from `StreamState`:
-
-```csharp
-var profile = new WarmPoolEncodingProfile(
+var profile = new EncodingProfile(
     state.OutputVideoCodec,
     state.OutputAudioCodec,
     state.OutputVideoBitrate,
     state.OutputAudioBitrate,
     state.OutputWidth,
-    state.OutputHeight);
-warmProvider.TryGetWarmPlaylist(warmSourceId, profile, out var warmPlaylistPath);
+    state.OutputHeight,
+    state.OutputAudioChannels);
+
+var warmContent = await warmProvider.TryGetPlaylistContentAsync(
+    warmSourceId,
+    profile,
+    playlistPath,
+    cancellationToken);
 ```
 
-In `TranscodeManager.KillTranscodingJob()`, the `TranscodingJob` doesn't currently store encoding params. We need to either:
-
-- Store the encoding profile on `TranscodingJob` when it's created in `OnTranscodeBeginning()`, OR
-- Extract it from `job.MediaSource` at kill time
+In `TranscodeManager.KillTranscodingJob()`, `TranscodingJob.EncodingProfile` is set in `OnTranscodeBeginning()` and passed to `TryAdoptProcess()` during job cleanup.
 
 **Files**: `Jellyfin.Api/Controllers/DynamicHlsController.cs`, `MediaBrowser.MediaEncoding/Transcoding/TranscodeManager.cs`
 
 #### 1c. Update Plugin to Key by Channel + Profile (Plugin)
 
-Change the dictionary key from `mediaSourceId` to `mediaSourceId + profileHash`:
+Change the dictionary key from `mediaSourceId` to a composite `{mediaSourceId}|{encodingProfileHash}`:
 
 ```csharp
-private static string ComputePoolKey(string mediaSourceId, WarmPoolEncodingProfile profile)
-{
-    var data = $"{mediaSourceId}-{profile.VideoCodec}-{profile.AudioCodec}-{profile.VideoBitrate}-{profile.AudioBitrate}-{profile.Width}-{profile.Height}";
-    return MD5Hash(data);
-}
+var encodingProfileHash = encodingProfile.ComputeHash();
+var poolKey = $"{mediaSourceId}|{encodingProfileHash}";
 ```
 
 This allows multiple warm entries per channel (one per encoding profile).
@@ -313,17 +299,17 @@ The count gets incremented on warm hits in `TryGetPlaylistPath()`. For decrement
 
 Focus: Keep IPTV connections alive for scenarios where the client plays the mpegts stream directly without FFmpeg. This is a secondary optimization since direct streaming is already fast (~1-5s), but keeping the connection warm eliminates the connection establishment and initial buffering delay.
 
-#### 3a. New Interface: IWarmStreamProvider (Server)
+#### 3a. ILiveStreamProvider Interface (Server) — COMPLETED
 
 ```csharp
-public interface IWarmStreamProvider
+public interface ILiveStreamProvider
 {
-    bool TryGetWarmStream(string mediaSourceId, out IDirectStreamProvider? streamProvider);
-    bool TryAdoptStream(string mediaSourceId, ILiveStream liveStream);
+    bool TryGetStream(string mediaSourceId, out ILiveStream? liveStream);
+    bool TryAdoptStream(string id, ILiveStream liveStream);
 }
 ```
 
-**Files**: New file in `MediaBrowser.Controller/LiveTv/`
+**Files**: `MediaBrowser.Controller/LiveTv/ILiveStreamProvider.cs`
 
 #### 3b. Hook in MediaSourceManager.CloseLiveStream (Server)
 
@@ -332,7 +318,7 @@ Before closing a live stream when `ConsumerCount` reaches 0, offer it to warm st
 ```csharp
 if (liveStream.ConsumerCount <= 0)
 {
-    foreach (var provider in _warmStreamProviders)
+    foreach (var provider in _liveStreamProviders)
     {
         if (provider.TryAdoptStream(id, liveStream))
         {
@@ -346,22 +332,11 @@ if (liveStream.ConsumerCount <= 0)
 
 **Files**: `Emby.Server.Implementations/Library/MediaSourceManager.cs` (~10 lines)
 
-#### 3c. Hook in MediaSourceManager or LiveTvMediaSourceProvider (Server)
+#### 3c. Reuse Flow (Server)
 
-Before opening a new live stream, check if a warm stream exists:
-
-```csharp
-foreach (var provider in _warmStreamProviders)
-{
-    if (provider.TryGetWarmStream(mediaSourceId, out var warmStream))
-    {
-        return warmStream; // Reuse existing connection
-    }
-}
-// Normal open
-```
-
-**Files**: `Emby.Server.Implementations/Library/MediaSourceManager.cs` or `src/Jellyfin.LiveTv/LiveTvMediaSourceProvider.cs` (~10 lines)
+Explicit lookup hooks are not required: `DefaultLiveTvService.GetChannelStreamWithDirectStreamProvider`
+already reuses streams from `MediaSourceManager._openStreams` by `OriginalStreamId`.
+When a provider adopts a stream, it stays in `_openStreams`, so reuse happens automatically.
 
 #### 3d. Implement WarmStreamPool in Plugin (Plugin)
 
@@ -403,13 +378,13 @@ Based on sequential viewing patterns (user watches channels 1→2→3), pre-warm
 
 | Change | Where | Size | Phase |
 | ------ | ----- | ---- | ----- |
-| `IWarmProcessProvider` interface | `MediaBrowser.Controller` | Done | Done |
+| `IHlsPlaylistProvider` interface | `MediaBrowser.Controller` | Done | Done |
 | Warm pool check in `DynamicHlsController` | `Jellyfin.Api` | Done | Done |
 | Warm pool adoption in `TranscodeManager` | `MediaBrowser.MediaEncoding` | Done | Done |
 | ConsumerCount bump on adoption | `MediaBrowser.MediaEncoding` | Done | Done |
-| **Extend `IWarmProcessProvider` with encoding profile** | `MediaBrowser.Controller` | ~20 lines | **Phase 1a** |
+| **Extend `IHlsPlaylistProvider` with encoding profile** | `MediaBrowser.Controller` | ~20 lines | **Phase 1a** |
 | **Pass encoding params at check + adoption** | `Jellyfin.Api` + `MediaBrowser.MediaEncoding` | ~20 lines | **Phase 1b** |
-| `IWarmStreamProvider` interface (new) | `MediaBrowser.Controller` | Done | Done |
+| `ILiveStreamProvider` interface (new) | `MediaBrowser.Controller` | Done | Done |
 | Adoption hook in `MediaSourceManager.CloseLiveStream` | `Emby.Server.Implementations` | Done | Done |
 | Warm stream check in `MediaSourceManager` | Not needed — stream sharing handles reuse | N/A | Done |
 | **Guard warm pool check behind playlist-exists** | `Jellyfin.Api` | ~2 lines moved | **Bug fix** |
@@ -424,7 +399,7 @@ All server changes are thin hook interfaces. Business logic stays in the plugin.
 | Idle timeout eviction timer | `WarmFFmpegProcessPool.cs` | Done |
 | LRU eviction on pool full | `WarmFFmpegProcessPool.cs` | Done |
 | Simplify consumer counting | `WarmFFmpegProcessPool.cs` | Done |
-| Implement `IWarmStreamProvider` | `WarmStreamProvider.cs` (new) | Done |
+| Implement `ILiveStreamProvider` | `WarmStreamProvider.cs` (new) | Done |
 | Warm stream pool | `WarmStreamPool.cs`, `WarmStreamInfo.cs` (new) | Done |
 | Viewing history tracking | `ViewingHistory.cs`, `WarmPoolEntryPoint.cs` (new) | Done |
 | Predictive pre-warming (priority boost) | `WarmPoolEntryPoint.cs`, `WarmFFmpegProcessPool.cs`, `WarmStreamPool.cs` | Done |
@@ -538,9 +513,9 @@ public string? OwnerDeviceId { get; set; }
 public bool IsOrphaned { get; set; }
 ```
 
-**Threading session info to `AdoptProcess()`**: The `IWarmProcessProvider.TryAdoptProcess()` interface does not carry session info. Options:
+**Threading session info to `AdoptProcess()`**: The `IHlsPlaylistProvider.TryAdoptProcess()` interface does not carry session info. Options:
 
-- **Option A**: Extend `IWarmProcessProvider` interface to include session ID (requires server change -- violates plugin-first principle)
+- **Option A**: Extend `IHlsPlaylistProvider` interface to include session ID (requires server change -- violates plugin-first principle)
 - **Option B (recommended)**: In `WarmPoolEntryPoint.OnPlaybackStopped`, store `{mediaSourceId → sessionId}` in a short-lived lookup. `WarmProcessProvider.TryAdoptProcess` reads from this lookup to tag the adopted entry. The adoption happens synchronously during the same `PlaybackStopped` processing pipeline, so timing is reliable.
 - **Option C**: After adoption, use a post-adoption hook to tag the entry based on recent `PlaybackStopped` events.
 
@@ -611,3 +586,4 @@ This is refinement, not essential for the core feature. The orphan flag from `Se
 ---
 
 *This plan should be updated as implementation progresses and new findings emerge.*
+

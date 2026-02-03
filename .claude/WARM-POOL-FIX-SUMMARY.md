@@ -91,11 +91,11 @@ Created comprehensive documentation:
 - **`Consumer-Tracking-Fix.md`** — Complete plugin implementation guide
 - **`Warm-Pool-Freeze-RootCause-Analysis.md`** — Detailed root cause analysis and testing strategy
 
-### Plugin-Side Changes (REQUIRED)
+### Plugin-Side Changes (COMPLETED — plugin v1.14.1)
 
-The plugin must implement the consumer tracking mechanism to complete the fix. See `.claude/Consumer-Tracking-Fix.md` for complete implementation guide.
+The plugin now implements the consumer tracking mechanism. See `.claude/Consumer-Tracking-Fix.md` for the full implementation guide and test checklist.
 
-**At minimum**, the plugin must:
+**Implementation includes**:
 
 1. **Implement `NotifyPlaylistConsumer()` in `WarmProcessProvider`**
    ```csharp
@@ -107,7 +107,7 @@ The plugin must implement the consumer tracking mechanism to complete the fix. S
    ```
 
 2. **Add `IncrementConsumerCount()` to `WarmFFmpegProcessPool`**
-   - Atomically increments the `ConsumerCount` for the matching pool entry
+   - Increments the `ConsumerCount` for the matching pool entry
    - Ensures the entry is protected from eviction
 
 3. **Add `DecrementConsumerCount()` methods**
@@ -131,7 +131,7 @@ PHASE 1: CONSUMER ARRIVAL (Server-Driven)
 ──────────────────────────────────────
 DynamicHlsController.GetLiveHlsStream()
    ↓
-TryGetWarmPlaylistContentAsync() → found a match!
+TryGetPlaylistContentAsync() → found a match!
    ↓
    ├─ Playlist returned to client
    │
@@ -219,10 +219,10 @@ Entry.ConsumerCount = 0
 
 ### Plugin Repository (jellyfin-plugin-warmpool)
 
-**Changes needed** (not yet implemented):
-- `WarmProcessProvider.cs` — implement `NotifyPlaylistConsumer()`
-- `WarmFFmpegProcessPool.cs` — add `IncrementConsumerCount()`, `DecrementConsumerCount()`, `DecrementAllConsumersForMediaSource()`
-- `WarmPoolEntryPoint.cs` — call `DecrementAllConsumersForMediaSource()` on `PlaybackStopped`
+**Changes implemented** (v1.14.1):
+- `WarmProcessProvider.cs` — implemented `NotifyPlaylistConsumer()`
+- `WarmFFmpegProcessPool.cs` — added `IncrementConsumerCount()`, `DecrementConsumerCount()`, `DecrementAllConsumersForMediaSource()`
+- `WarmPoolEntryPoint.cs` — calls `DecrementAllConsumersForMediaSource()` on `PlaybackStopped`
 
 **Detailed guide**: See `.claude/Consumer-Tracking-Fix.md` in Jellyfin repo
 
@@ -243,10 +243,9 @@ Entry.ConsumerCount = 0
 - All changes tested and building successfully
 - All commits pushed to `feature/fastchannelzapping`
 
-### ⏳ In Progress (Plugin Side)
-- Implementation guide ready in `.claude/Consumer-Tracking-Fix.md`
-- Requires plugin developer to implement the consumer tracking methods
-- Should be straightforward 2-3 hour implementation
+### ✅ Complete (Plugin Side)
+- Consumer tracking methods implemented (v1.14.1)
+- Implementation guide retained for future reference
 
 ### 📋 Future Enhancements
 - Pass exact encoding profile through `PlaybackStopEventArgs` for precision tracking
@@ -266,7 +265,7 @@ Entry.ConsumerCount = 0
 
 1. **Review this document** to understand the fix architecture
 2. **Read `.claude/Consumer-Tracking-Fix.md`** for detailed plugin implementation steps
-3. **Implement consumer tracking in plugin** (IncrementConsumerCount, DecrementConsumerCount, NotifyPlaylistConsumer)
+3. **Consumer tracking implemented in plugin** (IncrementConsumerCount, DecrementConsumerCount, NotifyPlaylistConsumer)
 4. **Test end-to-end** warm HIT playback (should no longer freeze)
 5. **Verify logs** show increment/decrement of ConsumerCount
 6. **Monitor production** for any consumer count leaks or eviction issues
@@ -281,5 +280,6 @@ Refer to:
 ---
 
 **Server-side implementation**: ✅ COMPLETE  
-**Plugin implementation**: ⏳ REQUIRED  
-**Status**: Ready for plugin developer to implement consumer tracking methods
+**Plugin implementation**: ✅ COMPLETE (v1.14.1)  
+**Status**: Ready for testing and verification
+
