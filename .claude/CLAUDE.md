@@ -12,7 +12,7 @@ Jellyfin is a free software media system — a fork of Emby 3.5.2. This reposito
 
 ### Plugin-First Development Philosophy
 
-**IMPORTANT**: When implementing new features or modifications, **minimize changes to the Jellyfin server codebase**. Prefer implementing functionality in plugins (like `jellyfin-plugin-warmpool`) whenever possible or feasible. The server should only provide minimal hook interfaces (like `IWarmProcessProvider`, `IWarmStreamProvider`, `ITunerResourceProvider`) while keeping all business logic in the plugin. This approach:
+**IMPORTANT**: When implementing new features or modifications, **minimize changes to the Jellyfin server codebase**. Prefer implementing functionality in plugins (like `jellyfin-plugin-warmpool`) whenever possible or feasible. The server should only provide minimal hook interfaces (like `IHlsPlaylistProvider`, `ILiveStreamProvider`, `ITunerResourceProvider`) while keeping all business logic in the plugin. This approach:
 
 - Keeps the core server lean and maintainable
 - Allows features to be optional and independently versioned
@@ -100,7 +100,7 @@ The codebase has two generations of code: **legacy Emby-era** (`Emby.*`, `MediaB
 
 ### Key Patterns
 
-**Dependency Injection**: All services are registered in DI. Controllers receive interfaces. Plugins can register `IWarmProcessProvider`, `ITunerResourceProvider`, `IExternalIdProvider`, etc., which get injected as `IEnumerable<T>`.
+**Dependency Injection**: All services are registered in DI. Controllers receive interfaces. Plugins can register `IHlsPlaylistProvider`, `ILiveStreamProvider`, `ITunerResourceProvider`, `IExternalIdProvider`, etc., which get injected as `IEnumerable<T>`.
 
 **Streaming/Transcoding flow**: `DynamicHlsController` handles HLS requests → `StreamingHelpers.GetStreamingState()` resolves media info → `TranscodeManager.StartFfMpeg()` spawns FFmpeg → segments written to `GetTranscodePath()`.
 
@@ -119,19 +119,21 @@ Alternative: `GET Videos/{itemId}/live.m3u8` → `GetLiveHlsStream` — starts F
 
 `PlaystateController.ReportPlaybackStopped` runs sequentially:
 
-1. `TranscodeManager.KillTranscodingJobs()` — kills FFmpeg process (or offers to warm pool via `IWarmProcessProvider.TryAdoptProcess()`)
+1. `TranscodeManager.KillTranscodingJobs()` — kills FFmpeg process (or offers to warm pool via `IHlsPlaylistProvider.TryAdoptProcess()`)
 2. `SessionManager.OnPlaybackStopped()` → `CloseLiveStreamIfNeededAsync()` → `MediaSourceManager.CloseLiveStream()` — decrements `ConsumerCount`, closes tuner if zero
 
 These are independent cleanup paths — both run even if the other has side effects. When the warm pool adopts a process, `ConsumerCount` is bumped to prevent premature tuner closure.
 
 ### Warm Pool Extension Point (feature/fastchannelzapping)
 
-`IWarmProcessProvider` (`MediaBrowser.Controller/LiveTv/IWarmProcessProvider.cs`) allows plugins to keep FFmpeg processes alive for fast LiveTV channel zapping:
+`IHlsPlaylistProvider` (`MediaBrowser.Controller/LiveTv/IHlsPlaylistProvider.cs`) allows plugins to keep FFmpeg processes alive for fast LiveTV channel zapping:
 
-- `TryGetWarmPlaylist(mediaSourceId, encodingProfile, out playlistPath)` — called by `DynamicHlsController` only when no playlist exists (i.e., FFmpeg cold start is needed)
-- `TryAdoptProcess(mediaSourceId, playlistPath, ffmpegProcess, liveStreamId)` — called by `TranscodeManager` when killing a job
+- `TryGetPlaylistContentAsync(mediaSourceId, encodingProfile, targetPlaylistPath, cancellationToken)` — called by `DynamicHlsController` only when no playlist exists (i.e., FFmpeg cold start is needed)
+- `NotifyPlaylistConsumer(mediaSourceId, encodingProfile)` — called by `DynamicHlsController` immediately before returning a warm playlist so the provider can increment consumer count
+- `TryAdoptProcess(mediaSourceId, encodingProfile, playlistPath, ffmpegProcess, liveStreamId)` — called by `TranscodeManager` when killing a job
+- `TryGetPlaylist(mediaSourceId, encodingProfile, out playlistPath)` — legacy/compatibility lookup (not used by the server path)
 
-Registered via DI as `IEnumerable<IWarmProcessProvider>`. Multiple providers supported; first-to-adopt wins. Only applies to infinite streams (LiveTV).
+Registered via DI as `IEnumerable<IHlsPlaylistProvider>`. Multiple providers supported; first-to-adopt wins. Only applies to infinite streams (LiveTV).
 
 `ITunerResourceProvider` (`MediaBrowser.Controller/LiveTv/ITunerResourceProvider.cs`) allows plugins to release tuner resources on demand when all tuners are in use:
 
@@ -143,17 +145,17 @@ Registered via DI as `IEnumerable<ITunerResourceProvider>`. The retry pattern ca
 
 **Location**: `C:\sourcecode\GitHub\jellyfin-plugin-warmpool` (sibling to this repo)
 
-The warm pool **plugin** implements `IWarmProcessProvider` and lives in a separate repository. It is the preferred approach — keeping warm pool logic in a plugin rather than modifying Jellyfin core/server code. The server only provides minimal hook interfaces.
+The warm pool **plugin** implements `IHlsPlaylistProvider` and lives in a separate repository. It is the preferred approach — keeping warm pool logic in a plugin rather than modifying Jellyfin core/server code. The server only provides minimal hook interfaces.
 
 ### Plugin Structure
 
 | File | Purpose |
 | ---- | ------- |
 | `Plugin.cs` | Entry point, extends `BasePlugin<PluginConfiguration>`, implements `IHasWebPages` for admin UI |
-| `PluginServiceRegistrator.cs` | DI registration: `IWarmProcessProvider`, `IWarmStreamProvider`, `ITunerResourceProvider`, `WarmPoolEntryPoint` hosted service |
+| `PluginServiceRegistrator.cs` | DI registration: `IHlsPlaylistProvider`, `ILiveStreamProvider`, `ITunerResourceProvider`, `WarmPoolEntryPoint` hosted service |
 | `PluginConfiguration.cs` | Config: `Enabled`, `PoolSize` (default 3), `IdleTimeoutMinutes`, `MaxDiskUsageMB`, `FFmpegPath` |
-| `WarmProcessProvider.cs` | Bridge implementing `IWarmProcessProvider`, delegates to `WarmFFmpegProcessPool` |
-| `WarmStreamProvider.cs` | Bridge implementing `IWarmStreamProvider`, delegates to `WarmStreamPool` |
+| `WarmProcessProvider.cs` | Bridge implementing `IHlsPlaylistProvider`, delegates to `WarmFFmpegProcessPool` |
+| `WarmStreamProvider.cs` | Bridge implementing `ILiveStreamProvider`, delegates to `WarmStreamPool` |
 | `TunerResourceProvider.cs` | Bridge implementing `ITunerResourceProvider`, evicts warm pool entries to free tuners on demand |
 | `WarmFFmpegProcessPool.cs` | Core FFmpeg process pool: adoption, lookup, session-aware eviction, idle cleanup |
 | `WarmStreamPool.cs` | Direct stream pool: adopts `ILiveStream` connections, session-aware eviction |
@@ -226,7 +228,7 @@ Version number location: `jellyfin-plugin-warmpool/Jellyfin.Plugin.WarmPool.cspr
 Examples:
 - Bug fix in pool cleanup logic: 1.3.0 → 1.3.1
 - Add new configuration option: 1.3.1 → 1.4.0
-- Change IWarmProcessProvider interface (breaking): 1.4.0 → 2.0.0
+- Change IHlsPlaylistProvider interface (breaking): 1.4.0 → 2.0.0
 
 ### Plugin Development Workflow
 
@@ -251,12 +253,12 @@ Always verify the build succeeds before committing to avoid pushing broken code.
 
 - **MediaSourceId matching**: `MD5(streamUrl)` using `Encoding.Unicode` (UTF-16LE) to match Jellyfin's `M3UTunerHost` channel ID computation
 - **Pool key**: Composite `{mediaSourceId}|{encodingProfileHash}` — warm hits only occur when both channel AND encoding parameters match
-- **Adoption**: On playback stop, `TranscodeManager` offers FFmpeg process to `IWarmProcessProvider`. Plugin adopts it, stores `liveStreamId` for tuner cleanup, and tags it with the owning session ID
+- **Adoption**: On playback stop, `TranscodeManager` offers FFmpeg process to `IHlsPlaylistProvider`. Plugin adopts it, stores `liveStreamId` for tuner cleanup, and tags it with the owning session ID
 - **Eviction scoring**: `score = historyPriority - (idleMinutes / 60.0) + orphanPenalty + fairnessPenalty`. Four eviction types: history-aware LRU (pool full), idle timeout (10 min default), dead process cleanup, disk space
 - **Session-aware eviction** (v1.8.0): Each pool entry tracks `OwnerSessionId` and `IsOrphaned`. When a user's session ends (`SessionEnded` event from WebSocket close / app exit), their entries are marked orphaned (`-10.0` penalty). Per-user fairness penalty (`-ownerSlots/totalSlots`) prevents any single user from monopolizing the pool. Orphaned entries remain available if no demand exists (lazy eviction)
 - **Session info pipeline**: `WarmPoolEntryPoint.OnPlaybackStopped` records `{mediaSourceId → sessionId}` via `WarmPoolManager.RecordRecentStop()`. During adoption (same pipeline), the pool calls `ConsumeRecentStop()` to tag the entry. No server interface changes needed
 - **Pool size**: Configurable max warm processes (default 3)
-- **Current version**: 1.14.0
+- **Current version**: 1.14.1
 
 ### Warm Pool Population: Automatic vs Manual
 
@@ -283,7 +285,7 @@ Always verify the build succeeds before committing to avoid pushing broken code.
 
 ### Encoding Parameter Matching (Completed — Phase 1)
 
-The `IWarmProcessProvider` interface passes both `mediaSourceId` (channel identity) and `EncodingProfile` (video codec, audio codec, bitrate, resolution). The pool key is `{mediaSourceId}|{encodingProfileHash}`, ensuring warm hits only occur when both channel AND transcoding profile match. Different clients requesting different profiles get separate pool entries.
+The `IHlsPlaylistProvider` interface passes both `mediaSourceId` (channel identity) and `EncodingProfile` (video codec, audio codec, bitrate, resolution). The pool key is `{mediaSourceId}|{encodingProfileHash}`, ensuring warm hits only occur when both channel AND transcoding profile match. Different clients requesting different profiles get separate pool entries.
 
 ## Detailed Documentation
 
@@ -322,3 +324,4 @@ Titles: short, descriptive, imperative mood ("Fix X", "Add Y", not "Fixed X", "A
 - Test projects mirror source projects under `tests/` (e.g., `tests/Jellyfin.Api.Tests` tests `Jellyfin.Api`)
 - Integration tests in `Jellyfin.Server.Integration.Tests` generate and validate the OpenAPI spec
 - Coverage settings in `tests/coverletArgs.runsettings`
+

@@ -20,7 +20,7 @@ In v1.7.0, the plugin removed the `ConsumerCount++` from `TryGetPlaylistPath()` 
   2. Updated `DynamicHlsController.GetLiveHlsStream()` to call `NotifyPlaylistConsumer()` AFTER a successful warm HIT
   3. The method is called BEFORE returning the playlist content to the client
 
-### Phase 2: Plugin-Side Implementation — REQUIRED
+### Phase 2: Plugin-Side Implementation — COMPLETED (plugin v1.14.1)
 
 #### 2a. Update WarmProcessProvider.cs
 
@@ -51,7 +51,10 @@ public void IncrementConsumerCount(string mediaSourceId, EncodingProfile encodin
 
     if (_warmProcesses.TryGetValue(poolKey, out var warmProcess))
     {
-        Interlocked.Increment(ref warmProcess.ConsumerCount);
+        lock (_consumerCountLock)
+        {
+            warmProcess.ConsumerCount++;
+        }
         _logger.LogDebug(
             "[WarmPool] Incremented consumer count for {MediaSourceId} profile {Profile}: {Count}",
             mediaSourceId,
@@ -70,20 +73,12 @@ private void OnPlaybackStopped(object? sender, PlaybackStopEventArgs e)
 {
     // ... existing logic ...
 
-    if (e.MediaSourceId is not null && e.MediaSourceId.StartsWith("md5:", StringComparison.Ordinal))
+    if (!string.IsNullOrEmpty(e.MediaSourceId))
     {
-        var pool = EnsureWarmPool();
-
-        // For EVERY encoding profile that might have been serving this mediaSourceId,
-        // try to decrement. This handles the case where a client switched encoding profiles
-        // (unlikely but possible) or where the same channel has multiple encoding variants.
-
-        // Option A (Simple): Decrement ALL pool entries matching this mediaSourceId
-        pool.DecrementAllConsumersForMediaSource(e.MediaSourceId);
-
-        // Option B (Precise): Track which specific encoding profile was being consumed
-        // This requires passing encoding profile info through PlaybackStopEventArgs
-        // (harder, requires server change)
+        // Decrement all pool entries matching this mediaSourceId.
+        // This handles the case where a client switched encoding profiles
+        // (unlikely but possible) or where the same channel has multiple variants.
+        WarmPoolManager.ProcessPoolInstance?.DecrementAllConsumersForMediaSource(e.MediaSourceId);
     }
 
     // ... rest of existing logic ...
@@ -102,9 +97,15 @@ public void DecrementConsumerCount(string mediaSourceId, EncodingProfile encodin
     var encodingProfileHash = encodingProfile.ComputeHash();
     var poolKey = GetPoolKey(mediaSourceId, encodingProfileHash);
 
-    if (_warmProcesses.TryGetValue(poolKey, out var warmProcess) && warmProcess.ConsumerCount > 0)
+    if (_warmProcesses.TryGetValue(poolKey, out var warmProcess))
     {
-        Interlocked.Decrement(ref warmProcess.ConsumerCount);
+        lock (_consumerCountLock)
+        {
+            if (warmProcess.ConsumerCount > 0)
+            {
+                warmProcess.ConsumerCount--;
+            }
+        }
         _logger.LogDebug(
             "[WarmPool] Decremented consumer count for {MediaSourceId} profile {Profile}: {Count}",
             mediaSourceId,
@@ -127,10 +128,16 @@ public void DecrementAllConsumersForMediaSource(string mediaSourceId)
 
         // key is "mediaSourceId|encodingProfileHash"
         var parts = key.Split('|');
-        if (parts.Length == 2 && parts[0] == mediaSourceId && process.ConsumerCount > 0)
+        if (parts.Length == 2 && parts[0] == mediaSourceId)
         {
-            Interlocked.Decrement(ref process.ConsumerCount);
-            decremented++;
+            lock (_consumerCountLock)
+            {
+                if (process.ConsumerCount > 0)
+                {
+                    process.ConsumerCount--;
+                    decremented++;
+                }
+            }
         }
     }
 
@@ -191,7 +198,7 @@ if (warmProcess.ConsumerCount > 0)
    - Client stops playback → consumer count decremented
    - Verify playback is smooth throughout
 
-## Implementation Order
+## Implementation Order (Completed)
 
 1. Implement `NotifyPlaylistConsumer()` in `WarmProcessProvider`
 2. Add `IncrementConsumerCount()` to `WarmFFmpegProcessPool`

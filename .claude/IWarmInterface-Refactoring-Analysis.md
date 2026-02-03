@@ -6,11 +6,11 @@
 
 **Short answer**: **No, not entirely. But significant refactoring is possible to minimize server-side code.**
 
-The interfaces `IWarmProcessProvider`, `IWarmStreamProvider`, and `ITunerResourceProvider` must remain in the server codebase because:
+The interfaces `IHlsPlaylistProvider`, `ILiveStreamProvider`, and `ITunerResourceProvider` must remain in the server codebase because:
 
 1. **DI Registration Requirement**: Controllers and services must be able to discover and inject these interfaces at startup
 2. **Dependency Inversion Principle**: The server cannot depend on the plugin; the plugin depends on the server by implementing these interfaces
-3. **Multi-provider Support**: The DI system automatically collects `IEnumerable<IWarmProcessProvider>` from all plugins — this is a core framework feature
+3. **Multi-provider Support**: The DI system automatically collects `IEnumerable<IHlsPlaylistProvider>` from all plugins — this is a core framework feature
 
 However, the **supporting types** and **non-critical interfaces** can be refactored, and the server-side code using them can be significantly simplified.
 
@@ -21,10 +21,10 @@ However, the **supporting types** and **non-critical interfaces** can be refacto
 ### Files in LiveTv Directory
 
 ```
-IWarmProcessProvider.cs       ← Core interface (plugin hook)
-IWarmStreamProvider.cs        ← Core interface (plugin hook)
+IHlsPlaylistProvider.cs       ← Core interface (plugin hook)
+ILiveStreamProvider.cs        ← Core interface (plugin hook)
 ITunerResourceProvider.cs     ← Core interface (plugin hook)
-ICustomPlaylistPublisher.cs   ← Optional interface (legacy, now redundant)
+ICustomPlaylistPublisher.cs   ← Optional interface (legacy; unused by server path)
 EncodingProfile.cs            ← Supporting DTO (shared between server & plugin)
 ChannelInfo.cs                ← LiveTV domain model
 ProgramInfo.cs                ← LiveTV domain model
@@ -48,8 +48,8 @@ LiveTvConflictException.cs    ← Domain exception
 ### Categorization
 
 **Must Stay in Server (Core Framework)**:
-- `IWarmProcessProvider` — Plugin discovery hook
-- `IWarmStreamProvider` — Plugin discovery hook
+- `IHlsPlaylistProvider` — Plugin discovery hook
+- `ILiveStreamProvider` — Plugin discovery hook
 - `ITunerResourceProvider` — Plugin discovery hook
 - `EncodingProfile` — Shared DTO between server and plugin
 
@@ -58,7 +58,7 @@ LiveTvConflictException.cs    ← Domain exception
 - All `IGuideManager`, `IListingsManager`, `ILiveTvManager`, etc. — LiveTV service contracts
 
 **Could Be Removed/Simplified**:
-- `ICustomPlaylistPublisher` — Now redundant (replaced by `TryGetWarmPlaylistContentAsync`)
+- `ICustomPlaylistPublisher` — Optional; server does not call it directly
 
 ---
 
@@ -71,7 +71,7 @@ Plugin Assembly (WarmPool)
         │
         │ implements
         ▼
-IWarmProcessProvider    ◄─── Must be defined in server
+IHlsPlaylistProvider    ◄─── Must be defined in server
         │                     (in MediaBrowser.Controller)
         │
         │ registered in
@@ -84,7 +84,7 @@ DynamicHlsController
         │
         │ consumes as
         ▼
-IEnumerable<IWarmProcessProvider>
+IEnumerable<IHlsPlaylistProvider>
 ```
 
 **Why the interface must be in the server**:
@@ -105,15 +105,15 @@ IEnumerable<IWarmProcessProvider>
 
 ## 3. Detailed Interface Analysis
 
-### 3.1 IWarmProcessProvider
+### 3.1 IHlsPlaylistProvider
 
 **Current Definition**:
 ```csharp
 namespace MediaBrowser.Controller.LiveTv;
 
-public interface IWarmProcessProvider
+public interface IHlsPlaylistProvider
 {
-    bool TryGetWarmPlaylist(
+    bool TryGetPlaylist(
         string mediaSourceId,
         EncodingProfile encodingProfile,
         out string? playlistPath);
@@ -125,11 +125,15 @@ public interface IWarmProcessProvider
         Process ffmpegProcess,
         string? liveStreamId);
 
-    Task<string?> TryGetWarmPlaylistContentAsync(
+    Task<string?> TryGetPlaylistContentAsync(
         string mediaSourceId,
         EncodingProfile encodingProfile,
         string targetPlaylistPath,
         CancellationToken cancellationToken);
+
+    void NotifyPlaylistConsumer(
+        string mediaSourceId,
+        EncodingProfile encodingProfile);
 }
 ```
 
@@ -138,26 +142,27 @@ public interface IWarmProcessProvider
 **Why**:
 - Called by `DynamicHlsController` at HLS request time
 - Called by `TranscodeManager` at job termination time
-- Multiple providers supported (registered as `IEnumerable<IWarmProcessProvider>`)
+- Multiple providers supported (registered as `IEnumerable<IHlsPlaylistProvider>`)
 - Plugin must implement this to be discovered
 
 **Server-side usage**:
-- [DynamicHlsController.cs line 337](DynamicHlsController.cs#L337): Calls `TryGetWarmPlaylistContentAsync()` in warm hit loop
+- [DynamicHlsController.cs line 337](DynamicHlsController.cs#L337): Calls `TryGetPlaylistContentAsync()` in warm hit loop
+- [DynamicHlsController.cs line 350](DynamicHlsController.cs#L350): Calls `NotifyPlaylistConsumer()` before returning a warm playlist
 - [TranscodeManager](TranscodeManager.cs): Calls `TryAdoptProcess()` when killing FFmpeg jobs
 
-**Refactoring opportunity**: The old methods (`TryGetWarmPlaylist`, `TryAdoptProcess`) are still defined but are **superseded** by `TryGetWarmPlaylistContentAsync`. Consider deprecating them with `[Obsolete]` attributes pointing plugins to the new method.
+**Refactoring opportunity**: `TryGetPlaylist` is legacy/compatibility and unused by the server path. Consider deprecating it with `[Obsolete]` attributes. `TryAdoptProcess` is still required for warm pool adoption.
 
 ---
 
-### 3.2 IWarmStreamProvider
+### 3.2 ILiveStreamProvider
 
 **Current Definition**:
 ```csharp
 namespace MediaBrowser.Controller.LiveTv;
 
-public interface IWarmStreamProvider
+public interface ILiveStreamProvider
 {
-    bool TryGetWarmStream(
+    bool TryGetStream(
         string mediaSourceId,
         out ILiveStream? liveStream);
 
@@ -171,7 +176,7 @@ public interface IWarmStreamProvider
 
 **Why**:
 - Called by `MediaSourceManager.CloseLiveStreamIfNeededAsync()` when live stream consumer count reaches 0
-- Multiple providers supported (registered as `IEnumerable<IWarmStreamProvider>`)
+- Multiple providers supported (registered as `IEnumerable<ILiveStreamProvider>`)
 - Requires knowledge of `ILiveStream` interface (from `MediaBrowser.Controller.Library`)
 
 **Server-side usage**:
@@ -269,45 +274,38 @@ public interface ICustomPlaylistPublisher
 }
 ```
 
-**Status**: ⚠️ **OBSOLETE - Can Be Removed**
+**Status**: ⚠️ **OPTIONAL - Unused by Server Path**
 
-**Why it's obsolete**:
-- `TryGetWarmPlaylistContentAsync()` on `IWarmProcessProvider` now encapsulates the entire workflow
-- The old pattern required two separate calls:
-  - `TryGetWarmPlaylist()` to check if content exists
-  - `TryPublishPlaylistAsync()` to write it
-- New pattern is simpler: one call returns the content directly
-- Only the old plugin implementation implements this; new implementations use `TryGetWarmPlaylistContentAsync()` instead
+**Why it's optional/unused**:
+- `TryGetPlaylistContentAsync()` on `IHlsPlaylistProvider` encapsulates the full warm-hit workflow used by the server
+- The server no longer calls `ICustomPlaylistPublisher` directly
+- Plugins may still implement it for internal reuse or manual publishing, but it is not required
 
 **Recommendation**:
-1. Mark as `[Obsolete("Use IWarmProcessProvider.TryGetWarmPlaylistContentAsync instead", true)]`
-2. Keep in codebase for backward compatibility with legacy plugins
-3. Server code should not call this anymore (it doesn't)
+1. Consider marking as `[Obsolete("Use IHlsPlaylistProvider.TryGetPlaylistContentAsync instead")]` once plugins migrate
+2. Keep in codebase for backward compatibility until ecosystem adoption is confirmed
+3. Server code should continue to avoid calling it (current behavior)
 
 ---
 
 ## 4. Refactoring Opportunities
 
-### 4.1 Deprecate Legacy Methods on IWarmProcessProvider
+### 4.1 Deprecate Legacy Methods on IHlsPlaylistProvider
 
-**Current code has three methods**; the old ones are superseded:
+**Current code has multiple methods**; only the legacy lookup is superseded:
 
 ```csharp
 // Legacy (kept for backward compatibility)
-bool TryGetWarmPlaylist(...);
-bool TryAdoptProcess(...);
+bool TryGetPlaylist(...);
 
-// New (encapsulates entire workflow)
-Task<string?> TryGetWarmPlaylistContentAsync(...);
+// New (encapsulates warm-hit workflow)
+Task<string?> TryGetPlaylistContentAsync(...);
 ```
 
 **Action**:
 ```csharp
-[Obsolete("Use TryGetWarmPlaylistContentAsync instead", false)]
-bool TryGetWarmPlaylist(...);
-
-[Obsolete("Will be removed in Jellyfin 10.10. Warm playlist publishing is now handled by TryGetWarmPlaylistContentAsync.", false)]
-bool TryAdoptProcess(...);
+[Obsolete("Use TryGetPlaylistContentAsync instead", false)]
+bool TryGetPlaylist(...);
 ```
 
 **Rationale**:
@@ -320,8 +318,8 @@ bool TryAdoptProcess(...);
 ### 4.2 Deprecate ICustomPlaylistPublisher
 
 ```csharp
-[Obsolete("This interface is superseded by IWarmProcessProvider.TryGetWarmPlaylistContentAsync. " +
-          "Implement IWarmProcessProvider instead.", true)]
+[Obsolete("This interface is superseded by IHlsPlaylistProvider.TryGetPlaylistContentAsync. " +
+          "Implement IHlsPlaylistProvider instead.", true)]
 public interface ICustomPlaylistPublisher
 {
     // ...
@@ -330,7 +328,7 @@ public interface ICustomPlaylistPublisher
 
 **Rationale**:
 - The warmpool plugin no longer implements this
-- All new providers should use `IWarmProcessProvider` exclusively
+- All new providers should use `IHlsPlaylistProvider` exclusively
 - Having two ways to publish is confusing and error-prone
 
 ---
@@ -406,14 +404,14 @@ public record EncodingProfile(
 
 ## 5. What CANNOT Be Moved to Plugin
 
-### IWarmProcessProvider, IWarmStreamProvider, ITunerResourceProvider
+### IHlsPlaylistProvider, ILiveStreamProvider, ITunerResourceProvider
 
 These three must remain in the server because:
 
 1. **Discovery Mechanism**: The DI container needs to know about them at registration time
 2. **Controller/Service Dependencies**: Many server components depend on them:
-   - `DynamicHlsController` depends on `IEnumerable<IWarmProcessProvider>`
-   - `MediaSourceManager` depends on `IEnumerable<IWarmStreamProvider>` and `IEnumerable<ITunerResourceProvider>`
+   - `DynamicHlsController` depends on `IEnumerable<IHlsPlaylistProvider>`
+   - `MediaSourceManager` depends on `IEnumerable<ILiveStreamProvider>` and `IEnumerable<ITunerResourceProvider>`
 3. **Plugin Polymorphism**: The plugin system relies on these to be discoverable
 
 The plugin implements them; the server uses them. This is correct architecture.
@@ -431,7 +429,7 @@ The server-side code **using** these interfaces is already quite clean:
 // Check warm process providers for pre-buffered LiveTV streams
 foreach (var warmProvider in _warmProcessProviders)
 {
-    var warmContent = await warmProvider.TryGetWarmPlaylistContentAsync(...)
+    var warmContent = await warmProvider.TryGetPlaylistContentAsync(...)
         .ConfigureAwait(false);
 
     if (warmContent is not null)
@@ -465,12 +463,12 @@ This is excellent separation of concerns.
 
 | Item | Current | Action | Why |
 |------|---------|--------|-----|
-| `IWarmProcessProvider` | In server | **Keep** | Must be discoverable by DI |
-| `IWarmStreamProvider` | In server | **Keep** | Must be discoverable by DI |
+| `IHlsPlaylistProvider` | In server | **Keep** | Must be discoverable by DI |
+| `ILiveStreamProvider` | In server | **Keep** | Must be discoverable by DI |
 | `ITunerResourceProvider` | In server | **Keep** | Must be discoverable by DI |
 | `EncodingProfile` | In server | **Keep** | Shared DTO across server/plugin boundary |
-| `ICustomPlaylistPublisher` | In server | **Deprecate** | Superseded by `TryGetWarmPlaylistContentAsync` |
-| Old methods on `IWarmProvider` | Defined | **Deprecate** | Superseded by `TryGetWarmPlaylistContentAsync` |
+| `ICustomPlaylistPublisher` | In server | **Consider deprecate** | Unused by server path; retained for plugin compatibility |
+| Legacy lookup on `IHlsPlaylistProvider` | Defined | **Deprecate** | Superseded by `TryGetPlaylistContentAsync` |
 | LiveTV domain models | In server | **Keep** | Part of core LiveTV system |
 | Plugin implementation classes | In plugin | **Keep** | Already in correct location |
 
@@ -482,7 +480,7 @@ This is excellent separation of concerns.
 
 The warm pool interfaces belong in the server because they are **discovery hooks** for the DI system, not domain logic. The principle of "minimize server changes" is already being followed:
 
-- Server provides three minimal interfaces (IWarmProcessProvider, IWarmStreamProvider, ITunerResourceProvider)
+- Server provides three minimal interfaces (IHlsPlaylistProvider, ILiveStreamProvider, ITunerResourceProvider)
 - Server provides one shared DTO (EncodingProfile)
 - **All business logic lives in the plugin** (WarmFFmpegProcessPool, scheduling, eviction, metrics)
 - Server-side code using these interfaces is already clean and minimal
@@ -493,8 +491,8 @@ The warm pool interfaces belong in the server because they are **discovery hooks
 - Breaking up EncodingProfile (it's a small, well-designed DTO)
 
 **What would improve** (minor):
-- Mark legacy methods as `[Obsolete]` to guide plugin developers
-- Deprecate `ICustomPlaylistPublisher` explicitly
+- Mark the legacy lookup method as `[Obsolete]` to guide plugin developers
+- Consider deprecating `ICustomPlaylistPublisher` explicitly once plugin adoption is confirmed
 - Consider making `EncodingProfile` a `record` type (C# 9+)
 
 ---
@@ -505,3 +503,4 @@ The warm pool interfaces belong in the server because they are **discovery hooks
 - [LiveTV-Architecture.md](LiveTV-Architecture.md) — Detailed LiveTV flow diagrams
 - [WarmPool-ChangePlan.md](WarmPool-ChangePlan.md) — Warm pool implementation phases
 - Plugin: `jellyfin-plugin-warmpool` repository
+

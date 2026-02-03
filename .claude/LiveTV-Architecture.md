@@ -377,7 +377,7 @@ var data = $"{state.MediaPath}-{state.UserAgent}-{deviceId!}-{playSessionId!}";
 var filename = data.GetMD5().ToString("N", CultureInfo.InvariantCulture);
 ```
 
-**Every client session produces a unique OutputFilePath** because `PlaySessionId` is unique per session. This means even two clients watching the same channel with the same encoding parameters get different FFmpeg output paths. The warm pool bypasses this by returning its own playlist path in `TryGetWarmPlaylist()` rather than relying on `OutputFilePath`.
+**Every client session produces a unique OutputFilePath** because `PlaySessionId` is unique per session. This means even two clients watching the same channel with the same encoding parameters get different FFmpeg output paths. The warm pool bypasses this by returning warm playlist content via `TryGetPlaylistContentAsync()` and publishing to the target path expected by the server.
 
 ### StreamState Key Fields
 
@@ -416,7 +416,7 @@ Created in `TranscodeManager.OnTranscodeBeginning()`. Stored in `_activeTranscod
 | `CancellationTokenSource` | Used to signal FFmpeg termination |
 | `ActiveRequestCount` | Number of pending segment requests |
 
-**Note**: `TranscodingJob` now stores an `EncodingProfile` field (added in Phase 1). The encoding profile is set in `OnTranscodeBeginning()` from `StreamState` and passed to `IWarmProcessProvider.TryAdoptProcess()` during `KillTranscodingJob()`. This ensures the plugin can key adopted entries by both channel AND encoding parameters.
+**Note**: `TranscodingJob` now stores an `EncodingProfile` field (added in Phase 1). The encoding profile is set in `OnTranscodeBeginning()` from `StreamState` and passed to `IHlsPlaylistProvider.TryAdoptProcess()` during `KillTranscodingJob()`. This ensures the plugin can key adopted entries by both channel AND encoding parameters.
 
 ### TranscodeManager
 
@@ -509,20 +509,28 @@ Eliminate FFmpeg startup delay (~5+ seconds) when changing LiveTV channels by ke
 
 ### Interface
 
-`MediaBrowser.Controller/LiveTv/IWarmProcessProvider.cs`:
+`MediaBrowser.Controller/LiveTv/IHlsPlaylistProvider.cs`:
 
 ```csharp
-public interface IWarmProcessProvider
+public interface IHlsPlaylistProvider
 {
-    bool TryGetWarmPlaylist(string mediaSourceId, EncodingProfile encodingProfile, out string? playlistPath);
+    bool TryGetPlaylist(string mediaSourceId, EncodingProfile encodingProfile, out string? playlistPath);
     bool TryAdoptProcess(string mediaSourceId, EncodingProfile encodingProfile, string playlistPath,
                          Process ffmpegProcess, string? liveStreamId);
+    Task<string?> TryGetPlaylistContentAsync(
+        string mediaSourceId,
+        EncodingProfile encodingProfile,
+        string targetPlaylistPath,
+        CancellationToken cancellationToken);
+    void NotifyPlaylistConsumer(string mediaSourceId, EncodingProfile encodingProfile);
 }
 ```
 
 `EncodingProfile` (`MediaBrowser.Controller/LiveTv/EncodingProfile.cs`) carries: `VideoCodec`, `AudioCodec`, `VideoBitrate`, `AudioBitrate`, `Width`, `Height`, `AudioChannels`. Its `ComputeHash()` method produces a deterministic MD5 hash for pool key generation.
 
-- **`TryGetWarmPlaylist`**: Called before FFmpeg cold start. Returns true + playlist path if a warm process exists for the requested media source AND encoding profile.
+- **`TryGetPlaylistContentAsync`**: Called before FFmpeg cold start. Returns playlist content and publishes it to the target path if a warm process exists for the requested media source AND encoding profile.
+- **`NotifyPlaylistConsumer`**: Called immediately before returning a warm playlist so the provider can increment consumer count.
+- **`TryGetPlaylist`**: Legacy/compatibility lookup (not used by the server path).
 - **`TryAdoptProcess`**: Called when killing a transcoding job. Returns true if the provider takes ownership of the FFmpeg process.
 
 ### Integration Points
@@ -535,9 +543,9 @@ In `GetLiveHlsStream()`, the warm pool check is **guarded by the playlist-exists
 1. If playlist file already exists (FFmpeg running): skip warm pool check, return playlist
 2. If playlist file does NOT exist (cold start needed):
    a. Check if media source is infinite stream (LiveTV)
-   b. For each IWarmProcessProvider:
-      → TryGetWarmPlaylist(mediaSourceId, encodingProfile, out playlistPath)
-      → If HIT and file exists: return cached playlist immediately
+   b. For each IHlsPlaylistProvider:
+      → TryGetPlaylistContentAsync(mediaSourceId, encodingProfile, playlistPath)
+      → If HIT: NotifyPlaylistConsumer(...) and return cached playlist content
       → If MISS: proceed to cold start FFmpeg
    c. Acquire transcode lock, start FFmpeg
 ```
@@ -548,8 +556,8 @@ In `KillTranscodingJob()`, before killing FFmpeg:
 
 ```
 1. Check if stream is infinite (LiveTV) and process is alive
-2. For each IWarmProcessProvider:
-   → TryAdoptProcess(mediaSourceId, playlistPath, process, liveStreamId)
+2. For each IHlsPlaylistProvider:
+   → TryAdoptProcess(mediaSourceId, encodingProfile, playlistPath, process, liveStreamId)
    → If adopted:
      a. Bump ConsumerCount on live stream (prevents premature closure)
      b. Skip ALL cleanup (CTS cancel, process kill, file delete)
@@ -571,7 +579,7 @@ Plugin eventually stops:    ConsumerCount = 0  (plugin calls CloseLiveStream, tu
 ### Plugin Contract
 
 A warm pool plugin must:
-1. Implement `IWarmProcessProvider`
+1. Implement `IHlsPlaylistProvider`
 2. Register via DI container
 3. On adoption: maintain FFmpeg process, keep playlist files on disk, hold `liveStreamId`
 4. On eviction: call `IMediaSourceManager.CloseLiveStream(liveStreamId)` to release tuner
@@ -627,7 +635,7 @@ Key: `-codec copy` means remux only (no transcoding). `-hls_list_size 5` keeps a
 | `IsOrphaned` | True when owning session has ended — heavily penalized in eviction scoring |
 | `IsRunning` | `Process != null && !Process.HasExited` |
 
-**Singleton pattern**: `WarmPoolManager` uses double-checked locking to ensure one pool instance per Jellyfin process. The pool is lazily created on first `TryGetWarmPlaylist()` or `TryAdoptProcess()` call via `WarmProcessProvider.EnsurePool()`. `WarmPoolManager` also hosts a transient `ConcurrentDictionary<mediaSourceId, SessionOwnerInfo>` for threading session ownership through the adoption pipeline (populated by `WarmPoolEntryPoint.OnPlaybackStopped`, consumed by `AdoptProcess`).
+**Singleton pattern**: `WarmPoolManager` uses double-checked locking to ensure one pool instance per Jellyfin process. The pool is lazily created on first `TryGetPlaylistContentAsync()` or `TryAdoptProcess()` call via `WarmProcessProvider.EnsurePool()`. `WarmPoolManager` also hosts a transient `ConcurrentDictionary<mediaSourceId, SessionOwnerInfo>` for threading session ownership through the adoption pipeline (populated by `WarmPoolEntryPoint.OnPlaybackStopped`, consumed by `AdoptProcess`).
 
 **Eviction cleanup** (`StopWarmProcessAsync`):
 
@@ -701,7 +709,7 @@ This design is critical for avoiding deadlocks. `CloseLiveStream` also acquires 
 
 | Commit | Description |
 |--------|-------------|
-| `83a589861` | Add `IWarmProcessProvider` interface and warm pool check in `DynamicHlsController` |
+| `83a589861` | Add `IHlsPlaylistProvider` interface and warm pool check in `DynamicHlsController` |
 | `c2b1c68d4` | Fix warm pool logging: one-time registration log, promote check/miss to Information |
 | `4882d6f78` | Add automatic warm pool adoption in `TranscodeManager.KillTranscodingJob()` |
 | `fbbed4e80` | Add `liveStreamId` parameter, implement ConsumerCount bump to prevent premature stream close |
@@ -762,8 +770,8 @@ This design is critical for avoiding deadlocks. `CloseLiveStream` also acquires 
 |------|---------------|---------|
 | `MediaBrowser.Controller/LiveTv/ITunerHost.cs` | `ITunerHost` | Tuner host contract |
 | `MediaBrowser.Controller/LiveTv/ILiveTvService.cs` | `ILiveTvService` | LiveTV backend provider contract |
-| `MediaBrowser.Controller/LiveTv/IWarmProcessProvider.cs` | `IWarmProcessProvider` | Warm FFmpeg process pool plugin contract |
-| `MediaBrowser.Controller/LiveTv/IWarmStreamProvider.cs` | `IWarmStreamProvider` | Warm direct stream pool plugin contract |
+| `MediaBrowser.Controller/LiveTv/IHlsPlaylistProvider.cs` | `IHlsPlaylistProvider` | Warm FFmpeg process pool plugin contract |
+| `MediaBrowser.Controller/LiveTv/ILiveStreamProvider.cs` | `ILiveStreamProvider` | Warm direct stream pool plugin contract |
 | `MediaBrowser.Controller/LiveTv/EncodingProfile.cs` | `EncodingProfile` | Encoding parameters for pool key matching |
 | `MediaBrowser.Controller/Library/ILiveStream.cs` | `ILiveStream` | Live stream contract |
 | `MediaBrowser.Controller/Library/IMediaSourceManager.cs` | `IMediaSourceManager` | Media source management contract |
@@ -826,8 +834,8 @@ When multiple clients request the same channel with the same encoding parameters
 
 ### What the Warm Pool Handles (as of v1.8.0)
 
-- **FFmpeg process pool** (`IWarmProcessProvider`): Keeps FFmpeg processes alive for remux/transcode scenarios. Keyed by channel + encoding profile.
-- **Direct stream pool** (`IWarmStreamProvider`, Phase 3): Keeps `ILiveStream` connections (e.g., `SharedHttpStream` to TVHeadend) alive for direct streaming scenarios. Adopted in `MediaSourceManager.CloseLiveStream()` when `ConsumerCount` reaches 0.
+- **FFmpeg process pool** (`IHlsPlaylistProvider`): Keeps FFmpeg processes alive for remux/transcode scenarios. Keyed by channel + encoding profile.
+- **Direct stream pool** (`ILiveStreamProvider`, Phase 3): Keeps `ILiveStream` connections (e.g., `SharedHttpStream` to TVHeadend) alive for direct streaming scenarios. Adopted in `MediaSourceManager.CloseLiveStream()` when `ConsumerCount` reaches 0.
 - **Session-aware eviction** (Phase 6): Tracks which session owns each pool entry. Orphaned entries (session ended) are heavily penalized in eviction scoring. Per-user fairness prevents pool monopolization.
 - **Viewing history + prediction** (Phase 4): Tracks per-user viewing patterns, predicts next channel, protects predicted channels from eviction.
 
@@ -848,15 +856,16 @@ When multiple clients request the same channel with the same encoding parameters
 
 ### Architecture Implications
 
-1. **Plugin-based design** is correct — keeps warm pool logic out of Jellyfin core, server provides only thin hook interfaces (`IWarmProcessProvider`, `IWarmStreamProvider`)
+1. **Plugin-based design** is correct — keeps warm pool logic out of Jellyfin core, server provides only thin hook interfaces (`IHlsPlaylistProvider`, `ILiveStreamProvider`)
 2. **FFmpeg is the key resource** — the warm pool fundamentally keeps FFmpeg alive on the mpegts stream; the TVHeadend connection is a side effect of this
 3. **Encoding parameter matching** is implemented — composite key `{mediaSourceId}|{encodingProfileHash}` ensures warm hits only occur when channel AND transcoding profile match
 4. **ConsumerCount pattern** is essential for preventing premature stream/tuner closure
 5. **Pool size** limits resource consumption — each warm process uses CPU, memory, bandwidth, and a tuner slot
 6. **Multiple warm pool providers** are supported (first-to-adopt wins), allowing different strategies
-7. **Direct streaming optimization** (Phase 3) is implemented via `IWarmStreamProvider` — keeps `ILiveStream` connections alive in `MediaSourceManager`
+7. **Direct streaming optimization** (Phase 3) is implemented via `ILiveStreamProvider` — keeps `ILiveStream` connections alive in `MediaSourceManager`
 8. **Session awareness** (Phase 6) — pool entries track their owning session; orphaned entries are preferentially evicted; per-user fairness prevents any single user from monopolizing pool slots
 
 ---
 
 *This document should be updated as the warm pool feature evolves and new findings emerge.*
+
