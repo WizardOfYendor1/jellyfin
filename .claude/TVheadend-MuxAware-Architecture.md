@@ -410,6 +410,9 @@ var isTunerPressure = freeTunersCount == 0;
    - Repeat until `freeTunersCount > 0` or pool size < threshold
    - **Fallback:** If no mux group is eligible (all have active consumers), evict any **idle** warm entry (process or stream) to free a tuner without interrupting active viewers.
 
+3. **No tuner pressure** (`freeTunersCount > 0`):
+   - Skip idle-timeout eviction in mux-aware mode to keep warm entries longer.
+
 **Benefits**:
 - **Reactive**: Only evicts aggressively when tuners are actually full
 - **Mux-aware**: Frees real tuner resources by evicting entire muxes

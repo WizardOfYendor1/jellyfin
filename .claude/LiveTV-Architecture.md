@@ -673,7 +673,7 @@ private readonly AsyncNonKeyedLocker _liveStreamLocker = new(1);
 
 When all physical tuners are in use (some by active viewers, some by warm pool entries), new tune requests fail with `LiveTvConflictException`. The `ITunerResourceProvider` interface allows plugins to free non-essential tuner resources on demand.
 
-**TVheadend tuner‑pressure monitor (plugin):** The WarmPool plugin also polls TVheadend tuner status. When `free=0`, it first attempts **mux‑aware eviction** (freeing an entire mux). If no mux group is eligible, it falls back to evicting any **idle** warm entry (process or stream) to free a tuner without interrupting active viewers.
+**TVheadend tuner‑pressure monitor (plugin):** The WarmPool plugin also polls TVheadend tuner status. When `free=0`, it first attempts **mux‑aware eviction** (freeing an entire mux). If no mux group is eligible, it falls back to evicting any **idle** warm entry (process or stream) to free a tuner without interrupting active viewers. When **tuners are available**, the plugin can skip idle-timeout eviction to keep warm entries longer.
 
 `MediaBrowser.Controller/LiveTv/ITunerResourceProvider.cs`:
 
