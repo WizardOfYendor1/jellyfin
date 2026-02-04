@@ -408,6 +408,7 @@ var isTunerPressure = freeTunersCount == 0;
      ```
    - Evict **entire lowest-scoring mux** (all streams from that mux)
    - Repeat until `freeTunersCount > 0` or pool size < threshold
+   - **Fallback:** If no mux group is eligible (all have active consumers), evict any **idle** warm entry (process or stream) to free a tuner without interrupting active viewers.
 
 **Benefits**:
 - **Reactive**: Only evicts aggressively when tuners are actually full
