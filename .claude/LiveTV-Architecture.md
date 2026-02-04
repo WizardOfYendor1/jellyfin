@@ -553,6 +553,7 @@ In `GetLiveHlsStream()`, the warm pool check is **guarded by the playlist-exists
 **Important for warm hits:** Because the server stops querying providers once the session playlist file exists, the plugin must keep the session playlist fresh. The warm pool plugin now continuously republishes the warm playlist to the session path while consumers are active.
 
 **Warm-hit start position:** The session playlist published by the plugin injects `#EXT-X-START` with a negative offset so clients begin near live while still allowing rewind (the underlying event playlist remains intact).
+**Warm-hit retention:** Session playlists are trimmed to roughly 2 hours of history, and older segment files are pruned to keep disk usage bounded while still supporting rewind.
 
 **Observed ordering detail (2026-02):** `TryGetPlaylistContentAsync()` returns the playlist **before** the server calls `NotifyPlaylistConsumer()`. That means a provider can start a republisher while `ConsumerCount` is still 0 for a short window. If the republisher stops immediately on `ConsumerCount == 0`, the session playlist goes stale and clients freeze ~3–6 seconds after a warm hit. **Mitigation:** keep the republisher alive for a short grace window (e.g., 3–5 seconds) to allow the consumer notification to arrive.
 
