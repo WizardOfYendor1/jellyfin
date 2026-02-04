@@ -552,6 +552,8 @@ In `GetLiveHlsStream()`, the warm pool check is **guarded by the playlist-exists
 
 **Important for warm hits:** Because the server stops querying providers once the session playlist file exists, the plugin must keep the session playlist fresh. The warm pool plugin now continuously republishes the warm playlist to the session path while consumers are active.
 
+**Observed ordering detail (2026-02):** `TryGetPlaylistContentAsync()` returns the playlist **before** the server calls `NotifyPlaylistConsumer()`. That means a provider can start a republisher while `ConsumerCount` is still 0 for a short window. If the republisher stops immediately on `ConsumerCount == 0`, the session playlist goes stale and clients freeze ~3–6 seconds after a warm hit. **Mitigation:** keep the republisher alive for a short grace window (e.g., 3–5 seconds) to allow the consumer notification to arrive.
+
 #### TranscodeManager (offer on stop)
 
 In `KillTranscodingJob()`, before killing FFmpeg:
@@ -566,6 +568,14 @@ In `KillTranscodingJob()`, before killing FFmpeg:
      c. Return early (process ownership transferred to plugin)
    → If not adopted: proceed with normal cleanup
 ```
+
+**Practical implication:** A warm pool entry is only created **after** the active transcode job is ending (active request count drops to 0). While a client is actively playing, the FFmpeg process is still owned by `TranscodeManager`, so it will **not** appear in the warm pool status. This explains why a process shows up in the pool only after the first client stops playback.
+
+**TryAdoptProcess sequencing notes (TranscodeManager):**
+- `TryAdoptProcess()` is only called inside `KillTranscodingJob()`; it is **not** invoked on every live session or while a session is actively playing.
+- Adoption happens after `OnTranscodeEndRequest()` drops the job’s active request count to 0 and the job is about to be cleaned up.
+- If adoption succeeds, the plugin must take full ownership: keep FFmpeg alive, keep playlists/segments on disk, and close `liveStreamId` later on eviction.
+- If adoption fails, TranscodeManager proceeds with normal shutdown (cancel CTS, kill FFmpeg, delete transcode artifacts, close live stream).
 
 ### Consumer Count Bump (Critical)
 
