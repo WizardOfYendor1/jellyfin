@@ -514,15 +514,12 @@ Eliminate FFmpeg startup delay (~5+ seconds) when changing LiveTV channels by ke
 ```csharp
 public interface IHlsPlaylistProvider
 {
-    bool TryGetPlaylist(string mediaSourceId, EncodingProfile encodingProfile, out string? playlistPath);
-    bool TryAdoptProcess(string mediaSourceId, EncodingProfile encodingProfile, string playlistPath,
-                         Process ffmpegProcess, string? liveStreamId);
+    bool TryGetPlaylist(HlsPlaylistRequestContext context, out string? playlistPath);
+    bool TryAdoptProcess(HlsProcessAdoptionContext context);
     Task<string?> TryGetPlaylistContentAsync(
-        string mediaSourceId,
-        EncodingProfile encodingProfile,
-        string targetPlaylistPath,
+        HlsPlaylistRequestContext context,
         CancellationToken cancellationToken);
-    void NotifyPlaylistConsumer(string mediaSourceId, EncodingProfile encodingProfile, string? playSessionId);
+    void NotifyPlaylistConsumer(HlsPlaylistRequestContext context);
 }
 ```
 
@@ -544,8 +541,8 @@ In `GetLiveHlsStream()`, the warm pool check is **guarded by the playlist-exists
 2. If playlist file does NOT exist (cold start needed):
    a. Check if media source is infinite stream (LiveTV)
    b. For each IHlsPlaylistProvider:
-      → TryGetPlaylistContentAsync(mediaSourceId, encodingProfile, playlistPath)
-      → If HIT: NotifyPlaylistConsumer(..., playSessionId) and return cached playlist content
+      → TryGetPlaylistContentAsync(context)
+      → If HIT: NotifyPlaylistConsumer(context) and return cached playlist content
       → If MISS: proceed to cold start FFmpeg
    c. Acquire transcode lock, start FFmpeg
 ```
@@ -564,7 +561,7 @@ In `KillTranscodingJob()`, before killing FFmpeg:
 ```
 1. Check if stream is infinite (LiveTV) and process is alive
 2. For each IHlsPlaylistProvider:
-   → TryAdoptProcess(mediaSourceId, encodingProfile, playlistPath, process, liveStreamId)
+   → TryAdoptProcess(adoptionContext)
    → If adopted:
      a. Bump ConsumerCount on live stream (prevents premature closure)
      b. Skip ALL cleanup (CTS cancel, process kill, file delete)

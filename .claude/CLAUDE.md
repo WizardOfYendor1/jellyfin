@@ -128,10 +128,10 @@ These are independent cleanup paths — both run even if the other has side effe
 
 `IHlsPlaylistProvider` (`MediaBrowser.Controller/LiveTv/IHlsPlaylistProvider.cs`) allows plugins to keep FFmpeg processes alive for fast LiveTV channel zapping:
 
-- `TryGetPlaylistContentAsync(mediaSourceId, encodingProfile, targetPlaylistPath, cancellationToken)` — called by `DynamicHlsController` only when no playlist exists (i.e., FFmpeg cold start is needed)
-- `NotifyPlaylistConsumer(mediaSourceId, encodingProfile, playSessionId)` — called by `DynamicHlsController` immediately before returning a warm playlist so the provider can increment consumer count
-- `TryAdoptProcess(mediaSourceId, encodingProfile, playlistPath, ffmpegProcess, liveStreamId)` — called by `TranscodeManager` when killing a job
-- `TryGetPlaylist(mediaSourceId, encodingProfile, out playlistPath)` — legacy/compatibility lookup (not used by the server path)
+- `TryGetPlaylistContentAsync(HlsPlaylistRequestContext context, CancellationToken cancellationToken)` — called by `DynamicHlsController` only when no playlist exists (i.e., FFmpeg cold start is needed)
+- `NotifyPlaylistConsumer(HlsPlaylistRequestContext context)` — called by `DynamicHlsController` immediately before returning a warm playlist so the provider can increment consumer count
+- `TryAdoptProcess(HlsProcessAdoptionContext context)` — called by `TranscodeManager` when killing a job
+- `TryGetPlaylist(HlsPlaylistRequestContext context, out playlistPath)` — legacy/compatibility lookup (not used by the server path)
 
 Registered via DI as `IEnumerable<IHlsPlaylistProvider>`. Multiple providers supported; first-to-adopt wins. Only applies to infinite streams (LiveTV).
 
@@ -285,7 +285,7 @@ Always verify the build succeeds before committing to avoid pushing broken code.
 
 ### Encoding Parameter Matching (Completed — Phase 1)
 
-The `IHlsPlaylistProvider` interface passes both `mediaSourceId` (channel identity) and `EncodingProfile` (video codec, audio codec, bitrate, resolution). The pool key is `{mediaSourceId}|{encodingProfileHash}`, ensuring warm hits only occur when both channel AND transcoding profile match. Different clients requesting different profiles get separate pool entries.
+The `IHlsPlaylistProvider` interface passes both `mediaSourceId` (channel identity) and `EncodingProfile` (video codec, audio codec, bitrate, resolution) via the request/adoption context objects. The pool key is `{mediaSourceId}|{encodingProfileHash}`, ensuring warm hits only occur when both channel AND transcoding profile match. Different clients requesting different profiles get separate pool entries.
 
 ## Detailed Documentation
 

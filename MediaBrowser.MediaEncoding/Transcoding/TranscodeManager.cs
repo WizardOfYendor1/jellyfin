@@ -247,7 +247,19 @@ public sealed class TranscodeManager : ITranscodeManager, IDisposable
 
             foreach (var provider in _hlsPlaylistProviders)
             {
-                if (provider.TryAdoptProcess(mediaSourceId, encodingProfile, playlistPath, job.Process, job.LiveStreamId))
+                var adoptionContext = new HlsProcessAdoptionContext
+                {
+                    MediaSourceId = mediaSourceId,
+                    EncodingProfile = encodingProfile,
+                    PlaylistPath = playlistPath,
+                    FfmpegProcess = job.Process!,
+                    LiveStreamId = job.LiveStreamId,
+                    PlaySessionId = job.PlaySessionId,
+                    DeviceId = job.DeviceId,
+                    MediaSource = job.MediaSource
+                };
+
+                if (provider.TryAdoptProcess(adoptionContext))
                 {
                     _logger.LogInformation(
                         "HLS playlist provider adopted FFmpeg process for media source {MediaSourceId} profile {Profile}. Skipping kill. PlaylistPath: {Path}",
