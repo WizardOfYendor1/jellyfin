@@ -6,7 +6,6 @@ using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Net.Mime;
 using System.Text;
-using System.Text.RegularExpressions;
 using Emby.Server.Implementations.EntryPoints;
 using Jellyfin.Api.Middleware;
 using Jellyfin.Database.Implementations;
@@ -179,8 +178,6 @@ namespace Jellyfin.Server
                         var contentType = context.Request.ContentType ?? "(none)";
                         var contentLength = context.Request.ContentLength?.ToString(CultureInfo.InvariantCulture) ?? "(none)";
                         var bodyPreview = "(not captured)";
-                        string? bodyText = null;
-                        var bodySanitized = false;
 
                         if (HttpMethods.IsPost(context.Request.Method))
                         {
@@ -188,8 +185,7 @@ namespace Jellyfin.Server
                             if (context.Request.ContentLength.HasValue && context.Request.ContentLength.Value <= 8192)
                             {
                                 using var reader = new StreamReader(context.Request.Body, Encoding.UTF8, false, 1024, true);
-                                bodyText = await reader.ReadToEndAsync().ConfigureAwait(false);
-                                bodyPreview = bodyText;
+                                bodyPreview = await reader.ReadToEndAsync().ConfigureAwait(false);
                                 context.Request.Body.Position = 0;
                             }
                             else if (context.Request.ContentLength.HasValue)
@@ -199,30 +195,6 @@ namespace Jellyfin.Server
                             else
                             {
                                 bodyPreview = "(skipped; no content-length)";
-                            }
-                        }
-
-                        if (bodyText is not null && bodyText.Contains("\"0000", StringComparison.Ordinal))
-                        {
-                            var sanitizedBody = bodyText;
-                            sanitizedBody = Regex.Replace(
-                                sanitizedBody,
-                                "\"StartDate\":\"0000[^\"]*\"",
-                                "\"StartDate\":\"0001-01-01T00:00:00Z\"",
-                                RegexOptions.CultureInvariant);
-                            sanitizedBody = Regex.Replace(
-                                sanitizedBody,
-                                "\"EndDate\":\"0000[^\"]*\"",
-                                "\"EndDate\":\"0001-01-01T00:00:00Z\"",
-                                RegexOptions.CultureInvariant);
-
-                            if (!string.Equals(bodyText, sanitizedBody, StringComparison.Ordinal))
-                            {
-                                bodySanitized = true;
-                                bodyPreview = sanitizedBody;
-                                var bodyBytes = Encoding.UTF8.GetBytes(sanitizedBody);
-                                context.Request.Body = new MemoryStream(bodyBytes);
-                                context.Request.ContentLength = bodyBytes.Length;
                             }
                         }
 
@@ -240,12 +212,6 @@ namespace Jellyfin.Server
                             contentLength,
                             userAgent,
                             bodyPreview);
-
-                        if (bodySanitized)
-                        {
-                            logger.LogWarning(
-                                "LiveTvTimers request body sanitized: invalid year 0000 dates replaced with 0001-01-01T00:00:00Z");
-                        }
                     }
 
                     await next().ConfigureAwait(false);
