@@ -469,24 +469,6 @@ Each recording opens its own dedicated live stream — it does NOT share with li
 
 If a recording fails before `EndDate` and `RetryCount < 10`, it retries after 60 seconds.
 
-### Client Recording Requests (Android TV vs Web)
-
-The recording UI ultimately calls the same server endpoints, but **some clients request timer defaults differently**, which can affect `ServiceName` resolution:
-
-- **Android TV playback overlay** uses `GET /LiveTv/Timers/Defaults` (no `programId`), then `POST /LiveTv/Timers` with `programId` set.
-- **Android TV program detail popup** uses `GET /LiveTv/Timers/Defaults?programId=...`, then `POST /LiveTv/Timers`.
-- **Web clients** typically request defaults **with** `programId`.
-
-On the server, `LiveTvManager.CreateTimer(...)` uses `timer.ServiceName` to select the `ILiveTvService`. If the client asked for defaults without `programId`, the returned `ServiceName` can be unrelated to the program’s actual service when multiple LiveTV services exist. This leads to `CreateTimer` failing even though the program itself is valid.
-
-**Server-side mitigation (generic, plugin-independent)**: resolve the service by `ProgramId` or `ChannelId` when `ServiceName` is missing/invalid, and fall back to the original behavior otherwise. This keeps behavior unchanged for well-behaved clients while preventing incorrect failures for clients that skip `programId`.
-
-### Warm Pool Interaction with Recording
-
-Recordings do **not** use the warm pool HLS playlist path. When a recording starts, Jellyfin opens a **fresh live stream** and records directly from that source (`RecordingsManager.RecordStream`). Warm pool only affects **viewer** HLS playback, not recording.
-
-However, warm pool processes still consume tuner resources. If all tuners are in use when a recording starts, `MediaSourceManager.OpenLiveStreamInternal(...)` can throw a tuner conflict. In that case, Jellyfin asks registered `ITunerResourceProvider` instances (including the warm pool plugin) to release a tuner and retries once.
-
 ---
 
 ## 9. Playback Stop and Cleanup
@@ -568,25 +550,9 @@ In `GetLiveHlsStream()`, the warm pool check is **guarded by the playlist-exists
 **Important for warm hits:** Because the server stops querying providers once the session playlist file exists, the plugin must keep the session playlist fresh. The warm pool plugin now continuously republishes the warm playlist to the session path while consumers are active.
 
 **Warm-hit start position:** The session playlist published by the plugin injects `#EXT-X-START` with a negative offset so clients begin near live while still allowing rewind (the underlying event playlist remains intact).
-**Warm-hit retention:** Session playlists are trimmed to a configurable **warm playlist window** (default 60 seconds) based on `WarmPlaylistWindowSeconds`. A minimum window is enforced based on target duration to avoid trimming too aggressively. Setting the window to `0` keeps the full event playlist.
+**Warm-hit retention:** Session playlists are trimmed to roughly 2 hours of history, and older segment files are pruned to keep disk usage bounded while still supporting rewind.
 
 **Observed ordering detail (2026-02):** `TryGetPlaylistContentAsync()` returns the playlist **before** the server calls `NotifyPlaylistConsumer()`. That means a provider can start a republisher while `ConsumerCount` is still 0 for a short window. If the republisher stops immediately on `ConsumerCount == 0`, the session playlist goes stale and clients freeze ~3–6 seconds after a warm hit. **Mitigation:** keep the republisher alive for a short grace window (e.g., 3–5 seconds) to allow the consumer notification to arrive.
-
-### Time-Shift (Pause/Rewind) and Warm Playlist Window
-
-**Baseline HLS behavior (no warm pool):**
-- `DynamicHlsController` runs FFmpeg with `-hls_list_size 0`, producing an event playlist that keeps growing.
-- Segment deletion is controlled by `EncodingOptions.SegmentKeepSeconds` via `TranscodingSegmentCleaner` (default minimum 20s), which determines how far back the server can rewind.
-
-**Warm pool behavior on warm hits:**
-- The plugin **rewrites** the session playlist, trimming it to the most recent `WarmPlaylistWindowSeconds`.
-- It injects `#EXT-X-START` so clients begin near live while still keeping some rewind buffer.
-- It periodically **prunes old segment files** when republishing to keep disk use bounded.
-
-**Impact:**
-- Rewind is effectively limited to the warm playlist window on warm hits.
-- Long pauses can “fall off” the window, causing clients to jump to live or fail to locate older segments.
-- Clients that ignore `#EXT-X-START` (e.g., Roku) will always start at the beginning of the trimmed window; clients that honor it can start near live while still permitting rewind.
 
 #### TranscodeManager (offer on stop)
 
@@ -916,3 +882,4 @@ When multiple clients request the same channel with the same encoding parameters
 ---
 
 *This document should be updated as the warm pool feature evolves and new findings emerge.*
+
