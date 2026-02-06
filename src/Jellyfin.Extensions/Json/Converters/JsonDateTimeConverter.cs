@@ -14,6 +14,27 @@ namespace Jellyfin.Extensions.Json.Converters
         /// <inheritdoc />
         public override DateTime Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
         {
+            if (reader.TokenType == JsonTokenType.String)
+            {
+                var text = reader.GetString();
+                if (string.IsNullOrEmpty(text))
+                {
+                    return default;
+                }
+
+                if (text.StartsWith("0000", StringComparison.Ordinal))
+                {
+                    return DateTime.MinValue;
+                }
+
+                if (DateTime.TryParse(text, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var parsed))
+                {
+                    return parsed;
+                }
+
+                throw new JsonException($"Invalid DateTime value: '{text}'.");
+            }
+
             return reader.GetDateTime();
         }
 
