@@ -26,7 +26,6 @@ using Microsoft.AspNetCore.StaticFiles;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.FileProviders;
-using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Primitives;
 using Prometheus;
@@ -153,52 +152,12 @@ namespace Jellyfin.Server
             var config = _serverConfigurationManager.GetNetworkConfiguration();
             app.Map(config.BaseUrl, mainApp =>
             {
-                var logger = mainApp.ApplicationServices
-                    .GetRequiredService<Microsoft.Extensions.Logging.ILoggerFactory>()
-                    .CreateLogger("LiveTvTimersRequest");
-
                 if (env.IsDevelopment())
                 {
                     mainApp.UseDeveloperExceptionPage();
                 }
 
                 mainApp.UseForwardedHeaders();
-                mainApp.Use(async (context, next) =>
-                {
-                    if (context.Request.Path.StartsWithSegments("/LiveTv/Timers", StringComparison.OrdinalIgnoreCase))
-                    {
-                        var hasEmbyToken = context.Request.Headers.ContainsKey("X-Emby-Token");
-                        var hasAuthorization = context.Request.Headers.ContainsKey("Authorization");
-                        var userAuthenticated = context.User?.Identity?.IsAuthenticated == true;
-                        var userName = context.User?.Identity?.Name ?? "(anonymous)";
-                        var userAgent = context.Request.Headers.UserAgent.ToString();
-                        var remoteIp = context.Connection.RemoteIpAddress?.ToString() ?? "(unknown)";
-
-                        logger.LogWarning(
-                            "LiveTvTimers request: {Method} {Path}{Query} from {RemoteIp} user={UserName} auth={IsAuth} headers: X-Emby-Token={HasEmbyToken} Authorization={HasAuthorization} UA='{UserAgent}'",
-                            context.Request.Method,
-                            context.Request.Path,
-                            context.Request.QueryString,
-                            remoteIp,
-                            userName,
-                            userAuthenticated,
-                            hasEmbyToken,
-                            hasAuthorization,
-                            userAgent);
-                    }
-
-                    await next().ConfigureAwait(false);
-
-                    if (context.Request.Path.StartsWithSegments("/LiveTv/Timers", StringComparison.OrdinalIgnoreCase))
-                    {
-                        logger.LogWarning(
-                            "LiveTvTimers response: {Method} {Path}{Query} -> {StatusCode}",
-                            context.Request.Method,
-                            context.Request.Path,
-                            context.Request.QueryString,
-                            context.Response.StatusCode);
-                    }
-                });
                 mainApp.UseMiddleware<ExceptionMiddleware>();
 
                 mainApp.UseMiddleware<ResponseTimeMiddleware>();
