@@ -35,6 +35,7 @@ using MediaBrowser.Model.Querying;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Api.Controllers;
 
@@ -48,6 +49,7 @@ public class LiveTvController : BaseJellyfinApiController
     private readonly ITunerHostManager _tunerHostManager;
     private readonly IListingsManager _listingsManager;
     private readonly IRecordingsManager _recordingsManager;
+    private readonly ILogger<LiveTvController> _logger;
     private readonly IUserManager _userManager;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILibraryManager _libraryManager;
@@ -64,6 +66,7 @@ public class LiveTvController : BaseJellyfinApiController
     /// <param name="tunerHostManager">Instance of the <see cref="ITunerHostManager"/> interface.</param>
     /// <param name="listingsManager">Instance of the <see cref="IListingsManager"/> interface.</param>
     /// <param name="recordingsManager">Instance of the <see cref="IRecordingsManager"/> interface.</param>
+    /// <param name="logger">Instance of the <see cref="ILogger{LiveTvController}"/> interface.</param>
     /// <param name="userManager">Instance of the <see cref="IUserManager"/> interface.</param>
     /// <param name="httpClientFactory">Instance of the <see cref="IHttpClientFactory"/> interface.</param>
     /// <param name="libraryManager">Instance of the <see cref="ILibraryManager"/> interface.</param>
@@ -77,6 +80,7 @@ public class LiveTvController : BaseJellyfinApiController
         ITunerHostManager tunerHostManager,
         IListingsManager listingsManager,
         IRecordingsManager recordingsManager,
+        ILogger<LiveTvController> logger,
         IUserManager userManager,
         IHttpClientFactory httpClientFactory,
         ILibraryManager libraryManager,
@@ -90,6 +94,7 @@ public class LiveTvController : BaseJellyfinApiController
         _tunerHostManager = tunerHostManager;
         _listingsManager = listingsManager;
         _recordingsManager = recordingsManager;
+        _logger = logger;
         _userManager = userManager;
         _httpClientFactory = httpClientFactory;
         _libraryManager = libraryManager;
@@ -490,6 +495,9 @@ public class LiveTvController : BaseJellyfinApiController
     [Authorize(Policy = Policies.LiveTvAccess)]
     public async Task<ActionResult<SeriesTimerInfoDto>> GetDefaultTimer([FromQuery] string? programId)
     {
+        _logger.LogWarning(
+            "LiveTvController.GetDefaultTimer called (diagnostic): programId='{ProgramId}'",
+            programId);
         return string.IsNullOrEmpty(programId)
             ? await _liveTvManager.GetNewTimerDefaults(CancellationToken.None).ConfigureAwait(false)
             : await _liveTvManager.GetNewTimerDefaults(programId, CancellationToken.None).ConfigureAwait(false);
@@ -850,8 +858,31 @@ public class LiveTvController : BaseJellyfinApiController
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     public async Task<ActionResult> CreateTimer([FromBody] TimerInfoDto timerInfo)
     {
-        await _liveTvManager.CreateTimer(timerInfo, CancellationToken.None).ConfigureAwait(false);
-        return NoContent();
+        _logger.LogWarning(
+            "LiveTvController.CreateTimer called (diagnostic): ServiceName='{ServiceName}', ProgramId='{ProgramId}', ExternalProgramId='{ExternalProgramId}', ChannelId='{ChannelId}', ExternalChannelId='{ExternalChannelId}'",
+            timerInfo.ServiceName,
+            timerInfo.ProgramId,
+            timerInfo.ExternalProgramId,
+            timerInfo.ChannelId,
+            timerInfo.ExternalChannelId);
+
+        try
+        {
+            await _liveTvManager.CreateTimer(timerInfo, CancellationToken.None).ConfigureAwait(false);
+            return NoContent();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(
+                ex,
+                "LiveTvController.CreateTimer failed: ServiceName='{ServiceName}', ProgramId='{ProgramId}', ExternalProgramId='{ExternalProgramId}', ChannelId='{ChannelId}', ExternalChannelId='{ExternalChannelId}'",
+                timerInfo.ServiceName,
+                timerInfo.ProgramId,
+                timerInfo.ExternalProgramId,
+                timerInfo.ChannelId,
+                timerInfo.ExternalChannelId);
+            throw;
+        }
     }
 
     /// <summary>
@@ -940,8 +971,31 @@ public class LiveTvController : BaseJellyfinApiController
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     public async Task<ActionResult> CreateSeriesTimer([FromBody] SeriesTimerInfoDto seriesTimerInfo)
     {
-        await _liveTvManager.CreateSeriesTimer(seriesTimerInfo, CancellationToken.None).ConfigureAwait(false);
-        return NoContent();
+        _logger.LogWarning(
+            "LiveTvController.CreateSeriesTimer called (diagnostic): ServiceName='{ServiceName}', ProgramId='{ProgramId}', ExternalProgramId='{ExternalProgramId}', ChannelId='{ChannelId}', ExternalChannelId='{ExternalChannelId}'",
+            seriesTimerInfo.ServiceName,
+            seriesTimerInfo.ProgramId,
+            seriesTimerInfo.ExternalProgramId,
+            seriesTimerInfo.ChannelId,
+            seriesTimerInfo.ExternalChannelId);
+
+        try
+        {
+            await _liveTvManager.CreateSeriesTimer(seriesTimerInfo, CancellationToken.None).ConfigureAwait(false);
+            return NoContent();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(
+                ex,
+                "LiveTvController.CreateSeriesTimer failed: ServiceName='{ServiceName}', ProgramId='{ProgramId}', ExternalProgramId='{ExternalProgramId}', ChannelId='{ChannelId}', ExternalChannelId='{ExternalChannelId}'",
+                seriesTimerInfo.ServiceName,
+                seriesTimerInfo.ProgramId,
+                seriesTimerInfo.ExternalProgramId,
+                seriesTimerInfo.ChannelId,
+                seriesTimerInfo.ExternalChannelId);
+            throw;
+        }
     }
 
     /// <summary>
