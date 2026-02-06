@@ -18,7 +18,7 @@ namespace Jellyfin.Extensions.Json.Converters
             {
                 var text = reader.GetString();
 
-                if (text != null && System.Text.RegularExpressions.Regex.IsMatch(text, @"^0000-\d{2}-\d{2}\b"))
+                if (text != null && System.Text.RegularExpressions.Regex.IsMatch(text, @"^0000-\d{2}-\d{2}"))
                 {
                     return DateTime.MinValue;
                 }
