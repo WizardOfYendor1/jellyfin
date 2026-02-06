@@ -1,5 +1,4 @@
 using System;
-using System.Globalization;
 using System.IO;
 using System.Net;
 using System.Net.Http;
@@ -23,7 +22,6 @@ using MediaBrowser.Controller.Extensions;
 using MediaBrowser.XbmcMetadata;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
-using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.StaticFiles;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -175,31 +173,9 @@ namespace Jellyfin.Server
                         var userName = context.User?.Identity?.Name ?? "(anonymous)";
                         var userAgent = context.Request.Headers.UserAgent.ToString();
                         var remoteIp = context.Connection.RemoteIpAddress?.ToString() ?? "(unknown)";
-                        var contentType = context.Request.ContentType ?? "(none)";
-                        var contentLength = context.Request.ContentLength?.ToString(CultureInfo.InvariantCulture) ?? "(none)";
-                        var bodyPreview = "(not captured)";
-
-                        if (HttpMethods.IsPost(context.Request.Method))
-                        {
-                            context.Request.EnableBuffering();
-                            if (context.Request.ContentLength.HasValue && context.Request.ContentLength.Value <= 8192)
-                            {
-                                using var reader = new StreamReader(context.Request.Body, Encoding.UTF8, false, 1024, true);
-                                bodyPreview = await reader.ReadToEndAsync().ConfigureAwait(false);
-                                context.Request.Body.Position = 0;
-                            }
-                            else if (context.Request.ContentLength.HasValue)
-                            {
-                                bodyPreview = $"(skipped; length={context.Request.ContentLength.Value})";
-                            }
-                            else
-                            {
-                                bodyPreview = "(skipped; no content-length)";
-                            }
-                        }
 
                         logger.LogWarning(
-                            "LiveTvTimers request: {Method} {Path}{Query} from {RemoteIp} user={UserName} auth={IsAuth} headers: X-Emby-Token={HasEmbyToken} Authorization={HasAuthorization} Content-Type='{ContentType}' Content-Length={ContentLength} UA='{UserAgent}' Body='{BodyPreview}'",
+                            "LiveTvTimers request: {Method} {Path}{Query} from {RemoteIp} user={UserName} auth={IsAuth} headers: X-Emby-Token={HasEmbyToken} Authorization={HasAuthorization} UA='{UserAgent}'",
                             context.Request.Method,
                             context.Request.Path,
                             context.Request.QueryString,
@@ -208,10 +184,7 @@ namespace Jellyfin.Server
                             userAuthenticated,
                             hasEmbyToken,
                             hasAuthorization,
-                            contentType,
-                            contentLength,
-                            userAgent,
-                            bodyPreview);
+                            userAgent);
                     }
 
                     await next().ConfigureAwait(false);
