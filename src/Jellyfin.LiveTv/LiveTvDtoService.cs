@@ -469,11 +469,21 @@ namespace Jellyfin.LiveTv
 
             if (!string.IsNullOrEmpty(dto.ProgramId) && string.IsNullOrEmpty(info.ProgramId))
             {
-                var program = _libraryManager.GetItemById(dto.ProgramId);
-
-                if (program is not null)
+                if (Guid.TryParse(dto.ProgramId, out var programId))
                 {
-                    info.ProgramId = program.ExternalId;
+                    var program = _libraryManager.GetItemById(programId);
+
+                    if (program is not null)
+                    {
+                        info.ProgramId = program.ExternalId;
+                    }
+                }
+                else
+                {
+                    _logger.LogWarning(
+                        "Timer program id '{ProgramId}' is not a GUID; treating it as an external program id.",
+                        dto.ProgramId);
+                    info.ProgramId = dto.ProgramId;
                 }
             }
 
@@ -535,11 +545,21 @@ namespace Jellyfin.LiveTv
 
             if (!string.IsNullOrEmpty(dto.ProgramId) && string.IsNullOrEmpty(info.ProgramId))
             {
-                var program = _libraryManager.GetItemById(dto.ProgramId);
-
-                if (program is not null)
+                if (Guid.TryParse(dto.ProgramId, out var programId))
                 {
-                    info.ProgramId = program.ExternalId;
+                    var program = _libraryManager.GetItemById(programId);
+
+                    if (program is not null)
+                    {
+                        info.ProgramId = program.ExternalId;
+                    }
+                }
+                else
+                {
+                    _logger.LogWarning(
+                        "Series timer program id '{ProgramId}' is not a GUID; treating it as an external program id.",
+                        dto.ProgramId);
+                    info.ProgramId = dto.ProgramId;
                 }
             }
 
