@@ -245,7 +245,7 @@ namespace Jellyfin.LiveTv
         {
             service = null;
 
-            if (channelId == Guid.Empty)
+            if (Guid.Equals(channelId, Guid.Empty))
             {
                 return false;
             }
