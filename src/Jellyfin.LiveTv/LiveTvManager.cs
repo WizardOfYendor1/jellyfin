@@ -174,7 +174,7 @@ namespace Jellyfin.LiveTv
                         "No service with the name '{0}' can be found.",
                         name));
 
-        private ILiveTvService ResolveServiceForTimer(TimerInfoDto timer, string operation)
+        private ILiveTvService ResolveServiceForTimer(BaseTimerInfoDto timer, string operation)
         {
             if (!string.IsNullOrWhiteSpace(timer.ServiceName))
             {
@@ -241,16 +241,16 @@ namespace Jellyfin.LiveTv
             return false;
         }
 
-        private bool TryResolveServiceFromChannelId(string channelId, out ILiveTvService service)
+        private bool TryResolveServiceFromChannelId(Guid channelId, out ILiveTvService service)
         {
             service = null;
 
-            if (string.IsNullOrWhiteSpace(channelId) || !Guid.TryParse(channelId, out var id))
+            if (channelId == Guid.Empty)
             {
                 return false;
             }
 
-            if (_libraryManager.GetItemById(id) is LiveTvChannel channel)
+            if (_libraryManager.GetItemById(channelId) is LiveTvChannel channel)
             {
                 service = GetService(channel);
                 return true;
