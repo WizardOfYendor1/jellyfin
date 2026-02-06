@@ -176,55 +176,6 @@ namespace Jellyfin.LiveTv
 
         private ILiveTvService ResolveServiceForTimer(BaseTimerInfoDto timer, string operation)
         {
-            _logger.LogDebug(
-                "{Operation}: resolving service (ServiceName='{ServiceName}', ProgramId='{ProgramId}', ChannelId='{ChannelId}', ExternalProgramId='{ExternalProgramId}', ExternalChannelId='{ExternalChannelId}')",
-                operation,
-                timer.ServiceName,
-                timer.ProgramId,
-                timer.ChannelId,
-                timer.ExternalProgramId,
-                timer.ExternalChannelId);
-
-            if (TryResolveServiceFromProgramId(timer.ProgramId, out var programService))
-            {
-                if (!string.IsNullOrWhiteSpace(timer.ServiceName)
-                    && !string.Equals(timer.ServiceName, programService.Name, StringComparison.OrdinalIgnoreCase))
-                {
-                    _logger.LogWarning(
-                        "{Operation}: requested service '{RequestedService}' does not match resolved service '{ResolvedService}' from program id; using resolved service.",
-                        operation,
-                        timer.ServiceName,
-                        programService.Name);
-                }
-
-                _logger.LogDebug(
-                    "{Operation}: resolved service '{ServiceName}' from program id {ProgramId}.",
-                    operation,
-                    programService.Name,
-                    timer.ProgramId);
-                return programService;
-            }
-
-            if (TryResolveServiceFromChannelId(timer.ChannelId, out var channelService))
-            {
-                if (!string.IsNullOrWhiteSpace(timer.ServiceName)
-                    && !string.Equals(timer.ServiceName, channelService.Name, StringComparison.OrdinalIgnoreCase))
-                {
-                    _logger.LogWarning(
-                        "{Operation}: requested service '{RequestedService}' does not match resolved service '{ResolvedService}' from channel id; using resolved service.",
-                        operation,
-                        timer.ServiceName,
-                        channelService.Name);
-                }
-
-                _logger.LogDebug(
-                    "{Operation}: resolved service '{ServiceName}' from channel id {ChannelId}.",
-                    operation,
-                    channelService.Name,
-                    timer.ChannelId);
-                return channelService;
-            }
-
             if (!string.IsNullOrWhiteSpace(timer.ServiceName))
             {
                 var named = _services.FirstOrDefault(
@@ -235,10 +186,33 @@ namespace Jellyfin.LiveTv
                 }
 
                 _logger.LogWarning(
-                    "{Operation}: service name '{ServiceName}' not found; unable to resolve by program/channel id.",
+                    "{Operation}: service name '{ServiceName}' not found; attempting to resolve by program/channel id.",
                     operation,
                     timer.ServiceName);
+            }
 
+            if (TryResolveServiceFromProgramId(timer.ProgramId, out var programService))
+            {
+                _logger.LogDebug(
+                    "{Operation}: resolved service '{ServiceName}' from program id {ProgramId}.",
+                    operation,
+                    programService.Name,
+                    timer.ProgramId);
+                return programService;
+            }
+
+            if (TryResolveServiceFromChannelId(timer.ChannelId, out var channelService))
+            {
+                _logger.LogDebug(
+                    "{Operation}: resolved service '{ServiceName}' from channel id {ChannelId}.",
+                    operation,
+                    channelService.Name,
+                    timer.ChannelId);
+                return channelService;
+            }
+
+            if (!string.IsNullOrWhiteSpace(timer.ServiceName))
+            {
                 return GetService(timer.ServiceName);
             }
 
@@ -1217,17 +1191,7 @@ namespace Jellyfin.LiveTv
 
         public async Task CreateTimer(TimerInfoDto timer, CancellationToken cancellationToken)
         {
-            _logger.LogInformation(
-                "CreateTimer requested: ServiceName='{ServiceName}', ProgramId='{ProgramId}', ExternalProgramId='{ExternalProgramId}', ChannelId='{ChannelId}', ExternalChannelId='{ExternalChannelId}'",
-                timer.ServiceName,
-                timer.ProgramId,
-                timer.ExternalProgramId,
-                timer.ChannelId,
-                timer.ExternalChannelId);
-
             var service = ResolveServiceForTimer(timer, "CreateTimer");
-
-            _logger.LogInformation("CreateTimer: resolved service '{ServiceName}'", service.Name);
 
             var info = await _tvDtoService.GetTimerInfo(timer, true, this, cancellationToken).ConfigureAwait(false);
 
@@ -1260,17 +1224,7 @@ namespace Jellyfin.LiveTv
 
         public async Task CreateSeriesTimer(SeriesTimerInfoDto timer, CancellationToken cancellationToken)
         {
-            _logger.LogInformation(
-                "CreateSeriesTimer requested: ServiceName='{ServiceName}', ProgramId='{ProgramId}', ExternalProgramId='{ExternalProgramId}', ChannelId='{ChannelId}', ExternalChannelId='{ExternalChannelId}'",
-                timer.ServiceName,
-                timer.ProgramId,
-                timer.ExternalProgramId,
-                timer.ChannelId,
-                timer.ExternalChannelId);
-
             var service = ResolveServiceForTimer(timer, "CreateSeriesTimer");
-
-            _logger.LogInformation("CreateSeriesTimer: resolved service '{ServiceName}'", service.Name);
 
             var info = await _tvDtoService.GetSeriesTimerInfo(timer, true, this, cancellationToken).ConfigureAwait(false);
 
