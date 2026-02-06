@@ -174,6 +174,91 @@ namespace Jellyfin.LiveTv
                         "No service with the name '{0}' can be found.",
                         name));
 
+        private ILiveTvService ResolveServiceForTimer(TimerInfoDto timer, string operation)
+        {
+            if (!string.IsNullOrWhiteSpace(timer.ServiceName))
+            {
+                var named = _services.FirstOrDefault(
+                    x => string.Equals(x.Name, timer.ServiceName, StringComparison.OrdinalIgnoreCase));
+                if (named is not null)
+                {
+                    return named;
+                }
+
+                _logger.LogWarning(
+                    "{Operation}: service name '{ServiceName}' not found; attempting to resolve by program/channel id.",
+                    operation,
+                    timer.ServiceName);
+            }
+
+            if (TryResolveServiceFromProgramId(timer.ProgramId, out var programService))
+            {
+                _logger.LogDebug(
+                    "{Operation}: resolved service '{ServiceName}' from program id {ProgramId}.",
+                    operation,
+                    programService.Name,
+                    timer.ProgramId);
+                return programService;
+            }
+
+            if (TryResolveServiceFromChannelId(timer.ChannelId, out var channelService))
+            {
+                _logger.LogDebug(
+                    "{Operation}: resolved service '{ServiceName}' from channel id {ChannelId}.",
+                    operation,
+                    channelService.Name,
+                    timer.ChannelId);
+                return channelService;
+            }
+
+            if (!string.IsNullOrWhiteSpace(timer.ServiceName))
+            {
+                return GetService(timer.ServiceName);
+            }
+
+            throw new KeyNotFoundException(
+                string.Format(
+                    CultureInfo.InvariantCulture,
+                    "No LiveTV service could be resolved for {0}; service name was empty and program/channel id could not be mapped.",
+                    operation));
+        }
+
+        private bool TryResolveServiceFromProgramId(string programId, out ILiveTvService service)
+        {
+            service = null;
+
+            if (string.IsNullOrWhiteSpace(programId) || !Guid.TryParse(programId, out var id))
+            {
+                return false;
+            }
+
+            if (_libraryManager.GetItemById(id) is LiveTvProgram program)
+            {
+                service = GetService(program);
+                return true;
+            }
+
+            return false;
+        }
+
+        private bool TryResolveServiceFromChannelId(string channelId, out ILiveTvService service)
+        {
+            service = null;
+
+            if (string.IsNullOrWhiteSpace(channelId) || !Guid.TryParse(channelId, out var id))
+            {
+                return false;
+            }
+
+            if (_libraryManager.GetItemById(id) is LiveTvChannel channel)
+            {
+                service = GetService(channel);
+                return true;
+            }
+
+            return false;
+        }
+
         public async Task<BaseItemDto> GetProgram(string id, CancellationToken cancellationToken, User user = null)
         {
             var program = _libraryManager.GetItemById(id);
@@ -1106,7 +1191,7 @@ namespace Jellyfin.LiveTv
 
         public async Task CreateTimer(TimerInfoDto timer, CancellationToken cancellationToken)
         {
-            var service = GetService(timer.ServiceName);
+            var service = ResolveServiceForTimer(timer, "CreateTimer");
 
             var info = await _tvDtoService.GetTimerInfo(timer, true, this, cancellationToken).ConfigureAwait(false);
 
@@ -1139,7 +1224,7 @@ namespace Jellyfin.LiveTv
 
         public async Task CreateSeriesTimer(SeriesTimerInfoDto timer, CancellationToken cancellationToken)
         {
-            var service = GetService(timer.ServiceName);
+            var service = ResolveServiceForTimer(timer, "CreateSeriesTimer");
 
             var info = await _tvDtoService.GetSeriesTimerInfo(timer, true, this, cancellationToken).ConfigureAwait(false);
 
