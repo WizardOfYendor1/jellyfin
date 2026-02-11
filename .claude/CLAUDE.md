@@ -153,7 +153,7 @@ The warm pool **plugin** implements `IHlsPlaylistProvider` and lives in a separa
 | ---- | ------- |
 | `Plugin.cs` | Entry point, extends `BasePlugin<PluginConfiguration>`, implements `IHasWebPages` for admin UI |
 | `PluginServiceRegistrator.cs` | DI registration: `IHlsPlaylistProvider`, `ILiveStreamProvider`, `ITunerResourceProvider`, `WarmPoolEntryPoint` hosted service |
-| `PluginConfiguration.cs` | Config: `Enabled`, `PoolSize` (default 3), `IdleTimeoutMinutes`, `MaxDiskUsageMB`, `FFmpegPath` |
+| `PluginConfiguration.cs` | Config: `PoolSize` (default 3), `IdleTimeoutMinutes`, `MaxDiskUsageMB`, `FFmpegPath`, TVheadend settings |
 | `WarmProcessProvider.cs` | Bridge implementing `IHlsPlaylistProvider`, delegates to `WarmFFmpegProcessPool` |
 | `WarmStreamProvider.cs` | Bridge implementing `ILiveStreamProvider`, delegates to `WarmStreamPool` |
 | `TunerResourceProvider.cs` | Bridge implementing `ITunerResourceProvider`, evicts warm pool entries to free tuners on demand |
@@ -212,7 +212,7 @@ docker restart jellyfin
 
 **Verification**:
 - Check Jellyfin logs after restart: `docker logs jellyfin`
-- Look for: `[PluginManager] Loaded plugin: Warm FFmpeg Process Pool 1.8.0`
+- Look for: `[PluginManager] Loaded plugin: Warm IPTV Process Pool 2.0.3`
 - Access plugin settings in Jellyfin web UI: Dashboard → Plugins → Warm FFmpeg Process Pool
 
 ### Plugin Version Management
@@ -223,7 +223,9 @@ docker restart jellyfin
 - **MINOR** (x.Y.0): Increment for new features, functionality additions, or enhancements that are backwards-compatible
 - **PATCH** (x.y.Z): Increment for bug fixes, performance improvements, or other backwards-compatible changes
 
-Version number location: `jellyfin-plugin-warmpool/Jellyfin.Plugin.WarmPool.csproj` in the `<Version>`, `<AssemblyVersion>`, and `<FileVersion>` elements.
+Version number locations:
+- `jellyfin-plugin-warmpool/Jellyfin.Plugin.WarmPool.csproj` in the `<Version>`, `<AssemblyVersion>`, and `<FileVersion>` elements
+- `jellyfin-plugin-warmpool/meta.json` in the `"version"` field (must match csproj)
 
 Examples:
 - Bug fix in pool cleanup logic: 1.3.0 → 1.3.1
@@ -255,10 +257,13 @@ Always verify the build succeeds before committing to avoid pushing broken code.
 - **Pool key**: Composite `{mediaSourceId}|{encodingProfileHash}` — warm hits only occur when both channel AND encoding parameters match
 - **Adoption**: On playback stop, `TranscodeManager` offers FFmpeg process to `IHlsPlaylistProvider`. Plugin adopts it, stores `liveStreamId` for tuner cleanup, and tags it with the owning session ID
 - **Eviction scoring**: `score = historyPriority - (idleMinutes / 60.0) + orphanPenalty + fairnessPenalty`. Four eviction types: history-aware LRU (pool full), idle timeout (10 min default), dead process cleanup, disk space
-- **Session-aware eviction** (v1.8.0): Each pool entry tracks `OwnerSessionId` and `IsOrphaned`. When a user's session ends (`SessionEnded` event from WebSocket close / app exit), their entries are marked orphaned (`-10.0` penalty). Per-user fairness penalty (`-ownerSlots/totalSlots`) prevents any single user from monopolizing the pool. Orphaned entries remain available if no demand exists (lazy eviction)
+- **Session-aware eviction**: Each pool entry tracks `OwnerSessionId` and `IsOrphaned`. When a user's session ends (`SessionEnded` event from WebSocket close / app exit), their entries are marked orphaned (`-10.0` penalty). Per-user fairness penalty (`-ownerSlots/totalSlots`) prevents any single user from monopolizing the pool. Orphaned entries remain available if no demand exists (lazy eviction)
 - **Session info pipeline**: `WarmPoolEntryPoint.OnPlaybackStopped` records `{mediaSourceId → sessionId}` via `WarmPoolManager.RecordRecentStop()`. During adoption (same pipeline), the pool calls `ConsumeRecentStop()` to tag the entry. No server interface changes needed
+- **Consumer tracking**: `NotifyPlaylistConsumer` increments `ConsumerCount` on warm HIT (keyed by `playSessionId`); `PlaybackStopped` decrements. Entries with active consumers are never evicted
+- **Viewing history + prediction**: Tracks channel frequencies and A→B transition patterns. `PredictNextChannel()` returns most likely next channel (global fallback when device-specific unavailable). Predicted channels get priority boost to prevent eviction
+- **Mux-aware eviction** (TVheadend): Groups warm entries by TVheadend mux ID. Under tuner pressure, evicts entire mux groups to free physical tuners. Generic IPTV mode reserves one stream slot per tuner host
 - **Pool size**: Configurable max warm processes (default 3)
-- **Current version**: 1.14.2
+- **Current version**: 2.3.0
 
 ### Warm Pool Population: Automatic vs Manual
 
