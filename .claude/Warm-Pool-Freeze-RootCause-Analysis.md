@@ -1,5 +1,7 @@
 # Warm Pool Freeze Issue - Root Cause & Fix
 
+> **Historical Note**: This document describes the freeze root cause analysis as of plugin v1.14.2. Interface signatures shown use individual parameters (refactored to context objects in v2.0.0). The analysis and fix remain valid. Current plugin version: 2.3.0. See also "Long-Lived Entry Freeze" section below for a separate freeze issue fixed in v2.3.0.
+
 ## Executive Summary
 
 **The Problem**: When a warm HIT occurs (cached FFmpeg process returned), the channel plays for ~10 seconds then freezes.
@@ -335,5 +337,25 @@ Why this works:
    - Direct streaming uses `ILiveStreamProvider`, not `IHlsPlaylistProvider`
    - Phase 3 (Direct Stream Warm Pool) already implements this for direct streams
    - **No change needed**: this fix only applies to HLS warm pools
+
+---
+
+## Long-Lived Entry Freeze (Fixed in v2.3.0)
+
+A separate freeze issue was identified where channels that had been in the warm pool for an extended period (30+ minutes) exhibited periodic ~60-second playback freeze/stutter cycles (~50 seconds of normal playback followed by ~10 seconds of freeze, repeating like clockwork).
+
+### Root Cause
+
+FFmpeg runs with `-hls_list_size 0`, causing the M3U8 playlist to grow unbounded (600+ segments after 30 minutes, 2400+ after 2 hours). The republisher's `BuildSessionPlaylistContent()` re-parsed the **entire** playlist on every cycle — O(N) where N = total segments ever written. Additionally, segment file deletion ran synchronously inside the republisher loop every 60 seconds (`WarmPlaylistPruneInterval`), blocking playlist updates to the client during deletion.
+
+Combined, these caused the republisher to stall for 500ms-2+ seconds every ~60 seconds. During the stall, no playlist updates reached the client, the client exhausted its segment buffer, and playback froze until the republisher resumed.
+
+### Fix (v2.3.0)
+
+1. **Incremental playlist parsing cache** (`BuildSessionPlaylistContentCached`): A `PlaylistParseCache` is attached to each `PlaylistPublishState`. On the first call, the full playlist is parsed into the cache. On subsequent calls, only newly appended segments are parsed (FFmpeg event playlists only append). The windowed output is always built from only the retention window segments — O(new_segments + window_size) instead of O(total_segments).
+
+2. **Async segment pruning** (`PruneSegmentFilesInBackground`): Segment file deletion is moved to a fire-and-forget `Task.Run` so it never blocks the republisher loop. The idle-check timer's `TryPruneOldSegments` was also moved to a background thread.
+
+These changes are entirely plugin-side — no server modifications needed.
 
 
