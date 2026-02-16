@@ -116,6 +116,27 @@ namespace MediaBrowser.Model.Dto
 
         public int? AnalyzeDurationMs { get; set; }
 
+        /// <summary>
+        /// Gets or sets the FFmpeg probe size in bytes.
+        /// When set, overrides the global probesize configuration.
+        /// </summary>
+        public int? ProbeSizeBytes { get; set; }
+
+        /// <summary>
+        /// Gets or sets the maximum output delay in microseconds for live HLS streams.
+        /// </summary>
+        public int? MaxDelayUs { get; set; }
+
+        /// <summary>
+        /// Gets or sets additional output format flags for live streams.
+        /// </summary>
+        public string OutputFFlags { get; set; }
+
+        /// <summary>
+        /// Gets or sets an override for HLS segment length in seconds.
+        /// </summary>
+        public int? OverrideSegmentLength { get; set; }
+
         [JsonIgnore]
         public TranscodeReason TranscodeReasons { get; set; }
 

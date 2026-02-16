@@ -333,6 +333,11 @@ namespace Jellyfin.LiveTv.TunerHosts.HdHomerun
                 IgnoreDts = true,
                 UseMostCompatibleTranscodingProfile = true, // All HDHR tuners require this
                 FallbackMaxStreamingBitrate = info.FallbackMaxStreamingBitrate,
+                AnalyzeDurationMs = info.AnalyzeDurationMs,
+                ProbeSizeBytes = info.ProbeSizeBytes,
+                MaxDelayUs = info.MaxDelayUs,
+                OutputFFlags = info.OutputFFlags,
+                OverrideSegmentLength = info.SegmentLength,
                 // IgnoreIndex = true,
                 // ReadAtNativeFramerate = true
             };
