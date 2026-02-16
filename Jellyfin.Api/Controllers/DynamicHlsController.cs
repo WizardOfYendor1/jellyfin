@@ -16,8 +16,10 @@ using Jellyfin.Data.Enums;
 using Jellyfin.Extensions;
 using Jellyfin.MediaEncoding.Hls.Playlist;
 using MediaBrowser.Common.Configuration;
+using MediaBrowser.Common.Extensions;
 using MediaBrowser.Controller.Configuration;
 using MediaBrowser.Controller.Library;
+using MediaBrowser.Controller.LiveTv;
 using MediaBrowser.Controller.MediaEncoding;
 using MediaBrowser.Controller.Streaming;
 using MediaBrowser.MediaEncoding.Encoder;
@@ -59,6 +61,8 @@ public class DynamicHlsController : BaseJellyfinApiController
     private readonly EncodingHelper _encodingHelper;
     private readonly IDynamicHlsPlaylistGenerator _dynamicHlsPlaylistGenerator;
     private readonly DynamicHlsHelper _dynamicHlsHelper;
+    private readonly IEnumerable<IHlsPlaylistProvider> _hlsPlaylistProviders;
+    private static int _hlsPlaylistProviderLoggedOnce;
     private readonly EncodingOptions _encodingOptions;
 
     /// <summary>
@@ -75,6 +79,7 @@ public class DynamicHlsController : BaseJellyfinApiController
     /// <param name="dynamicHlsHelper">Instance of <see cref="DynamicHlsHelper"/>.</param>
     /// <param name="encodingHelper">Instance of <see cref="EncodingHelper"/>.</param>
     /// <param name="dynamicHlsPlaylistGenerator">Instance of <see cref="IDynamicHlsPlaylistGenerator"/>.</param>
+    /// <param name="hlsPlaylistProviders">HLS playlist providers from plugins.</param>
     public DynamicHlsController(
         ILibraryManager libraryManager,
         IUserManager userManager,
@@ -86,7 +91,8 @@ public class DynamicHlsController : BaseJellyfinApiController
         ILogger<DynamicHlsController> logger,
         DynamicHlsHelper dynamicHlsHelper,
         EncodingHelper encodingHelper,
-        IDynamicHlsPlaylistGenerator dynamicHlsPlaylistGenerator)
+        IDynamicHlsPlaylistGenerator dynamicHlsPlaylistGenerator,
+        IEnumerable<IHlsPlaylistProvider> hlsPlaylistProviders)
     {
         _libraryManager = libraryManager;
         _userManager = userManager;
@@ -99,6 +105,13 @@ public class DynamicHlsController : BaseJellyfinApiController
         _dynamicHlsHelper = dynamicHlsHelper;
         _encodingHelper = encodingHelper;
         _dynamicHlsPlaylistGenerator = dynamicHlsPlaylistGenerator;
+        _hlsPlaylistProviders = hlsPlaylistProviders;
+
+        var hlsPlaylistProviderCount = _hlsPlaylistProviders.Count();
+        if (hlsPlaylistProviderCount > 0 && Interlocked.Exchange(ref _hlsPlaylistProviderLoggedOnce, 1) == 0)
+        {
+            _logger.LogInformation("DynamicHlsController: {Count} HLS playlist provider(s) registered", hlsPlaylistProviderCount);
+        }
 
         _encodingOptions = serverConfigurationManager.GetEncodingOptions();
     }
@@ -299,6 +312,77 @@ public class DynamicHlsController : BaseJellyfinApiController
 
         if (!System.IO.File.Exists(playlistPath))
         {
+            if (state.MediaSource?.IsInfiniteStream == true)
+            {
+                var mediaStateSourceId = state.MediaSource.Id;
+                var encodingProfile = new EncodingProfile(
+                    state.OutputVideoCodec,
+                    state.OutputAudioCodec,
+                    state.OutputVideoBitrate,
+                    state.OutputAudioBitrate,
+                    state.OutputWidth,
+                    state.OutputHeight,
+                    state.OutputAudioChannels);
+
+                _logger.LogInformation(
+                    "HLS playlist provider check: media source {MediaSourceId} with profile {Profile}, querying {Count} provider(s)",
+                    mediaStateSourceId,
+                    encodingProfile.ToString(),
+                    _hlsPlaylistProviders.Count());
+
+                var userId = User.GetUserId();
+                var resolvedPlaySessionId = !string.IsNullOrWhiteSpace(state.Request.PlaySessionId)
+                    ? state.Request.PlaySessionId
+                    : playSessionId;
+                var resolvedDeviceId = !string.IsNullOrWhiteSpace(state.Request.DeviceId)
+                    ? state.Request.DeviceId
+                    : User.GetDeviceId();
+
+                var playlistRequestContext = new HlsPlaylistRequestContext
+                {
+                    MediaSourceId = mediaStateSourceId,
+                    EncodingProfile = encodingProfile,
+                    TargetPlaylistPath = playlistPath,
+                    Request = state.Request,
+                    StreamState = state,
+                    MediaSource = state.MediaSource,
+                    PlaySessionId = resolvedPlaySessionId,
+                    DeviceId = resolvedDeviceId,
+                    UserId = userId.IsEmpty() ? null : userId,
+                    UserAgent = state.UserAgent,
+                    Client = User.GetClient(),
+                    ClientVersion = User.GetVersion(),
+                    DeviceName = User.GetDevice(),
+                    RemoteIp = HttpContext.GetNormalizedRemoteIP().ToString()
+                };
+
+                foreach (var hlsPlaylistProvider in _hlsPlaylistProviders)
+                {
+                    var playlistContent = await hlsPlaylistProvider.TryGetPlaylistContentAsync(
+                        playlistRequestContext,
+                        cancellationToken).ConfigureAwait(false);
+
+                    if (playlistContent is not null)
+                    {
+                        _logger.LogInformation(
+                            "HLS playlist provider HIT for media source {MediaSourceId} profile {Profile}, serving cached playlist",
+                            mediaStateSourceId,
+                            encodingProfile.ToString());
+
+                        // Notify the provider that a consumer is about to receive this playlist.
+                        // The provider will increment its consumer count to prevent eviction
+                        // while the client actively consumes segments.
+                        hlsPlaylistProvider.NotifyPlaylistConsumer(playlistRequestContext);
+                        return Content(playlistContent, MimeTypes.GetMimeType("playlist.m3u8"));
+                    }
+                }
+
+                _logger.LogInformation(
+                    "HLS playlist provider MISS for media source {MediaSourceId} profile {Profile}, proceeding with standard transcoding",
+                    mediaStateSourceId,
+                    encodingProfile.ToString());
+            }
+
             using (await _transcodeManager.LockAsync(playlistPath, cancellationToken).ConfigureAwait(false))
             {
                 if (!System.IO.File.Exists(playlistPath))
