@@ -207,7 +207,8 @@ namespace Jellyfin.LiveTv.TunerHosts
                 ProbeSizeBytes = info.ProbeSizeBytes,
                 MaxDelayUs = info.MaxDelayUs,
                 OutputFFlags = info.OutputFFlags,
-                OverrideSegmentLength = info.SegmentLength
+                OverrideSegmentLength = info.SegmentLength,
+                OverrideMinSegments = info.MinSegments
             };
 
             mediaSource.InferTotalBitrate();
