@@ -70,13 +70,14 @@ namespace Emby.Server.Implementations.Library
             {
                 if (addProbeDelay)
                 {
-                    var delayMs = mediaSource.AnalyzeDurationMs ?? 0;
-                    delayMs = Math.Max(3000, delayMs);
+                    // Use tuner-configured value if set, otherwise default to 3000ms
+                    var delayMs = mediaSource.AnalyzeDurationMs ?? 3000;
                     _logger.LogInformation("Waiting {0}ms before probing the live stream", delayMs);
                     await Task.Delay(delayMs, cancellationToken).ConfigureAwait(false);
                 }
 
-                mediaSource.AnalyzeDurationMs = 3000;
+                // Only set default if not already configured by the tuner host
+                mediaSource.AnalyzeDurationMs ??= 3000;
 
                 mediaInfo = await _mediaEncoder.GetMediaInfo(
                     new MediaInfoRequest
