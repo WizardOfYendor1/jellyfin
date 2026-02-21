@@ -117,6 +117,11 @@ public class StreamState : EncodingJobInfo, IDisposable
                 return Request.MinSegments.Value;
             }
 
+            if (MediaSource?.OverrideMinSegments.HasValue == true)
+            {
+                return MediaSource.OverrideMinSegments.Value;
+            }
+
             return SegmentLength >= 10 ? 2 : 3;
         }
     }

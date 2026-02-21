@@ -80,5 +80,11 @@ namespace MediaBrowser.Model.LiveTv
         /// When null, the client-requested or default segment length is used.
         /// </summary>
         public int? SegmentLength { get; set; }
+
+        /// <summary>
+        /// Gets or sets the minimum number of HLS segments to buffer before returning the playlist to the client.
+        /// Lower values reduce startup delay. When null, the default (3 for segments &lt; 10s, 2 otherwise) is used.
+        /// </summary>
+        public int? MinSegments { get; set; }
     }
 }
