@@ -137,6 +137,11 @@ namespace MediaBrowser.Model.Dto
         /// </summary>
         public int? OverrideSegmentLength { get; set; }
 
+        /// <summary>
+        /// Gets or sets an override for the minimum number of HLS segments buffered before playback starts.
+        /// </summary>
+        public int? OverrideMinSegments { get; set; }
+
         [JsonIgnore]
         public TranscodeReason TranscodeReasons { get; set; }
 
