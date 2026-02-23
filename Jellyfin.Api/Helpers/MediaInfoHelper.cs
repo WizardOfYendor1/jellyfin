@@ -246,9 +246,9 @@ public class MediaInfoHelper
 
         options.MaxBitrate = GetMaxBitrate(maxBitrate, user, ipAddress);
 
-        if (!options.ForceDirectStream)
+        if (!options.ForceDirectStream && !mediaSource.IsInfiniteStream)
         {
-            // direct-stream http streaming is currently broken
+            // direct-stream http streaming is currently broken for VOD content
             options.EnableDirectStream = false;
         }
 
