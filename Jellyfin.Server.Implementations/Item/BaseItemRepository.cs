@@ -2096,20 +2096,38 @@ public sealed class BaseItemRepository
 
         if (filter.IsLiked.HasValue)
         {
-            baseQuery = baseQuery
-                .Where(e => e.UserData!.FirstOrDefault(f => f.UserId == filter.User!.Id)!.Rating >= UserItemData.MinLikeValue);
+            if (filter.IsLiked.Value)
+            {
+                baseQuery = baseQuery.Where(e => e.UserData!.Any(ud => ud.UserId == filter.User!.Id && ud.Rating >= UserItemData.MinLikeValue));
+            }
+            else
+            {
+                baseQuery = baseQuery.Where(e => !e.UserData!.Any(ud => ud.UserId == filter.User!.Id && ud.Rating >= UserItemData.MinLikeValue));
+            }
         }
 
         if (filter.IsFavoriteOrLiked.HasValue)
         {
-            baseQuery = baseQuery
-                .Where(e => e.UserData!.FirstOrDefault(f => f.UserId == filter.User!.Id)!.IsFavorite == filter.IsFavoriteOrLiked);
+            if (filter.IsFavoriteOrLiked.Value)
+            {
+                baseQuery = baseQuery.Where(e => e.UserData!.Any(ud => ud.UserId == filter.User!.Id && ud.IsFavorite));
+            }
+            else
+            {
+                baseQuery = baseQuery.Where(e => !e.UserData!.Any(ud => ud.UserId == filter.User!.Id && ud.IsFavorite));
+            }
         }
 
         if (filter.IsFavorite.HasValue)
         {
-            baseQuery = baseQuery
-                .Where(e => e.UserData!.FirstOrDefault(f => f.UserId == filter.User!.Id)!.IsFavorite == filter.IsFavorite);
+            if (filter.IsFavorite.Value)
+            {
+                baseQuery = baseQuery.Where(e => e.UserData!.Any(ud => ud.UserId == filter.User!.Id && ud.IsFavorite));
+            }
+            else
+            {
+                baseQuery = baseQuery.Where(e => !e.UserData!.Any(ud => ud.UserId == filter.User!.Id && ud.IsFavorite));
+            }
         }
 
         if (filter.IsPlayed.HasValue)
