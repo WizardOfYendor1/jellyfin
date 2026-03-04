@@ -1,6 +1,7 @@
 using System;
 using System.Diagnostics;
 using System.Threading;
+using MediaBrowser.Controller.LiveTv;
 using MediaBrowser.Model.Dto;
 using Microsoft.Extensions.Logging;
 
@@ -50,6 +51,12 @@ public sealed class TranscodingJob : IDisposable
     /// Gets or sets path.
     /// </summary>
     public string? Path { get; set; }
+
+    /// <summary>
+    /// Gets or sets the encoding profile (codec, bitrate, resolution).
+    /// Used for warm pool matching.
+    /// </summary>
+    public EncodingProfile? EncodingProfile { get; set; }
 
     /// <summary>
     /// Gets or sets the type.
