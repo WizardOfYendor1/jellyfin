@@ -86,5 +86,13 @@ namespace MediaBrowser.Model.LiveTv
         /// Lower values reduce startup delay. When null, the default (3 for segments &lt; 10s, 2 otherwise) is used.
         /// </summary>
         public int? MinSegments { get; set; }
+
+        /// <summary>
+        /// Gets or sets the duration in seconds for the first HLS segment only.
+        /// A short first segment (e.g. 1-2s) allows the player to start faster on cold tune.
+        /// Subsequent segments use the normal <see cref="SegmentLength"/>.
+        /// When null, FFmpeg uses the same duration for all segments.
+        /// </summary>
+        public int? HlsInitTimeSec { get; set; }
     }
 }
