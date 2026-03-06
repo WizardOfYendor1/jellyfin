@@ -339,6 +339,7 @@ namespace Jellyfin.LiveTv.TunerHosts.HdHomerun
                 OutputFFlags = info.OutputFFlags,
                 OverrideSegmentLength = info.SegmentLength,
                 OverrideMinSegments = info.MinSegments,
+                HlsInitTimeSec = info.HlsInitTimeSec,
                 // IgnoreIndex = true,
                 // ReadAtNativeFramerate = true
             };

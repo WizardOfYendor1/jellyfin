@@ -1719,10 +1719,12 @@ public class DynamicHlsController : BaseJellyfinApiController
         var outputFFlags = state.MediaSource?.OutputFFlags;
         var outputFflagsParam = string.IsNullOrEmpty(outputFFlags) ? string.Empty : $" -fflags {outputFFlags}";
         var segmentLength = state.MediaSource?.OverrideSegmentLength ?? state.SegmentLength;
+        var hlsInitTime = state.MediaSource?.HlsInitTimeSec;
+        var hlsInitTimeParam = hlsInitTime.HasValue ? $" -hls_init_time {hlsInitTime.Value.ToString(CultureInfo.InvariantCulture)}" : string.Empty;
 
         return string.Format(
             CultureInfo.InvariantCulture,
-            "{0} {1} -map_metadata -1 -map_chapters -1 -threads {2} {3} {4} {5} -copyts -avoid_negative_ts disabled -max_muxing_queue_size {6} -f hls -max_delay {7} -hls_time {8} -hls_segment_type {9} -start_number {10}{11} -hls_segment_filename \"{12}\" {13}{14} -y \"{15}\"",
+            "{0} {1} -map_metadata -1 -map_chapters -1 -threads {2} {3} {4} {5} -copyts -avoid_negative_ts disabled -max_muxing_queue_size {6} -f hls -max_delay {7}{8} -hls_time {9} -hls_segment_type {10} -start_number {11}{12} -hls_segment_filename \"{13}\" {14}{15} -y \"{16}\"",
             inputModifier,
             _encodingHelper.GetInputArgument(state, _encodingOptions, segmentContainer),
             threads,
@@ -1731,6 +1733,7 @@ public class DynamicHlsController : BaseJellyfinApiController
             GetAudioArguments(state),
             maxMuxingQueueSize,
             maxDelay.ToString(CultureInfo.InvariantCulture),
+            hlsInitTimeParam,
             segmentLength.ToString(CultureInfo.InvariantCulture),
             segmentFormat,
             startNumber.ToString(CultureInfo.InvariantCulture),
