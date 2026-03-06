@@ -142,6 +142,13 @@ namespace MediaBrowser.Model.Dto
         /// </summary>
         public int? OverrideMinSegments { get; set; }
 
+        /// <summary>
+        /// Gets or sets the duration in seconds for the first HLS segment only (-hls_init_time).
+        /// A short first segment (e.g. 1-2s) allows the player to start faster on cold tune.
+        /// Subsequent segments use the normal segment length. When null, all segments use the same duration.
+        /// </summary>
+        public int? HlsInitTimeSec { get; set; }
+
         [JsonIgnore]
         public TranscodeReason TranscodeReasons { get; set; }
 
