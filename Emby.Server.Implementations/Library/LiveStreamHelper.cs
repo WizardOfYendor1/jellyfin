@@ -178,7 +178,7 @@ namespace Emby.Server.Implementations.Library
                 videoStream.IsAVC = null;
             }
 
-            mediaSource.AnalyzeDurationMs = 3000;
+            mediaSource.AnalyzeDurationMs ??= 3000;
 
             // Try to estimate this
             mediaSource.InferTotalBitrate(true);
