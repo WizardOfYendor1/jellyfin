@@ -137,6 +137,9 @@ public class ItemUpdateController : BaseJellyfinApiController
 
     /// <summary>
     /// Adds and removes tags on an item without replacing the full item payload.
+    /// Tags in the Remove list are removed first, then tags in the Add list are appended.
+    /// Duplicate and whitespace-only entries are ignored. Only the specified item is
+    /// modified — child items (seasons, episodes, tracks) are not affected.
     /// </summary>
     /// <param name="itemId">The item id.</param>
     /// <param name="request">The tags to add and remove.</param>
@@ -154,9 +157,16 @@ public class ItemUpdateController : BaseJellyfinApiController
             return NotFound();
         }
 
+        var tagsToAdd = request.Add
+            .Where(t => !string.IsNullOrWhiteSpace(t))
+            .ToArray();
+        var tagsToRemove = request.Remove
+            .Where(t => !string.IsNullOrWhiteSpace(t))
+            .ToArray();
+
         item.Tags = item.Tags
-            .Except(request.Remove, StringComparer.OrdinalIgnoreCase)
-            .Concat(request.Add)
+            .Except(tagsToRemove, StringComparer.OrdinalIgnoreCase)
+            .Concat(tagsToAdd)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
 
