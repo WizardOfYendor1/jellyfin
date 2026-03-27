@@ -127,6 +127,30 @@ public sealed class BaseItemRepository
             .Where(e => e.ItemId == PlaceholderId)
             .ExecuteDelete();
 
+        // Remove intra-relatedItems UserData duplicates that would cause a UNIQUE constraint
+        // violation when multiple items being deleted share the same (UserId, CustomDataKey).
+        // This can happen when duplicate DB entries exist for the same episode (e.g. after
+        // a directory rename causes the same item to be scanned more than once).
+        // Load into memory since EF Core cannot translate GroupBy+Skip to SQL.
+        var duplicateUserDataKeys = context.UserData
+            .WhereOneOrMany(relatedItems, e => e.ItemId)
+            .Select(e => new { e.ItemId, e.UserId, e.CustomDataKey, e.LastPlayedDate, e.PlaybackPositionTicks })
+            .ToList()
+            .GroupBy(e => new { e.UserId, e.CustomDataKey })
+            .Where(g => g.Count() > 1)
+            .SelectMany(g => g
+                .OrderByDescending(u => u.LastPlayedDate)
+                .ThenByDescending(u => u.PlaybackPositionTicks)
+                .Skip(1))
+            .ToList();
+
+        foreach (var key in duplicateUserDataKeys)
+        {
+            context.UserData
+                .Where(e => e.ItemId == key.ItemId && e.UserId == key.UserId && e.CustomDataKey == key.CustomDataKey)
+                .ExecuteDelete();
+        }
+
         // Detach all user watch data
         context.UserData.WhereOneOrMany(relatedItems, e => e.ItemId)
             .ExecuteUpdate(e => e
