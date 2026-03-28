@@ -7189,12 +7189,18 @@ namespace MediaBrowser.Controller.MediaEncoding
 
             inputModifier = inputModifier.Trim();
 
-            // Apply -probesize if configured
-            var ffmpegProbeSizeArgument = GetFfmpegProbesizeArg();
-
-            if (!string.IsNullOrEmpty(ffmpegProbeSizeArgument))
+            // Apply -probesize: per-source override takes priority over global config
+            if (state.MediaSource.ProbeSizeBytes > 0)
             {
-                inputModifier += " " + ffmpegProbeSizeArgument;
+                inputModifier += $" -probesize {state.MediaSource.ProbeSizeBytes.Value.ToString(CultureInfo.InvariantCulture)}";
+            }
+            else
+            {
+                var ffmpegProbeSize = _config.GetFFmpegProbeSize();
+                if (!string.IsNullOrEmpty(ffmpegProbeSize))
+                {
+                    inputModifier += $" -probesize {ffmpegProbeSize}";
+                }
             }
 
             var userAgentParam = GetUserAgentParam(state);

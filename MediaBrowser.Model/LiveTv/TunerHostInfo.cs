@@ -46,5 +46,53 @@ namespace MediaBrowser.Model.LiveTv
         public bool IgnoreDts { get; set; }
 
         public bool ReadAtNativeFramerate { get; set; }
+
+        /// <summary>
+        /// Gets or sets the FFmpeg analyze duration in milliseconds for this tuner.
+        /// Lower values speed up tuning but may cause stream detection issues.
+        /// When null, the global setting or FFmpeg default is used.
+        /// </summary>
+        public int? AnalyzeDurationMs { get; set; }
+
+        /// <summary>
+        /// Gets or sets the FFmpeg probe size in bytes for this tuner.
+        /// Lower values speed up initial stream detection.
+        /// When null, the global setting or FFmpeg default is used.
+        /// </summary>
+        public int? ProbeSizeBytes { get; set; }
+
+        /// <summary>
+        /// Gets or sets the maximum output delay in microseconds for live HLS streams.
+        /// Lower values reduce the time before the first segment is available.
+        /// When null, the default of 5000000 (5 seconds) is used.
+        /// </summary>
+        public int? MaxDelayUs { get; set; }
+
+        /// <summary>
+        /// Gets or sets additional output format flags for live streams.
+        /// Example: "+flush_packets+nobuffer" for lower latency.
+        /// </summary>
+        public string OutputFFlags { get; set; }
+
+        /// <summary>
+        /// Gets or sets the HLS segment length in seconds for this tuner.
+        /// Shorter segments reduce initial tune time but increase overhead.
+        /// When null, the client-requested or default segment length is used.
+        /// </summary>
+        public int? SegmentLength { get; set; }
+
+        /// <summary>
+        /// Gets or sets the minimum number of HLS segments to buffer before returning the playlist to the client.
+        /// Lower values reduce startup delay. When null, the default (3 for segments &lt; 10s, 2 otherwise) is used.
+        /// </summary>
+        public int? MinSegments { get; set; }
+
+        /// <summary>
+        /// Gets or sets the duration in seconds for the first HLS segment only.
+        /// A short first segment (e.g. 1-2s) allows the player to start faster on cold tune.
+        /// Subsequent segments use the normal <see cref="SegmentLength"/>.
+        /// When null, FFmpeg uses the same duration for all segments.
+        /// </summary>
+        public int? HlsInitTimeSec { get; set; }
     }
 }

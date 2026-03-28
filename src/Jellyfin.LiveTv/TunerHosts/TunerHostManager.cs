@@ -86,6 +86,25 @@ public class TunerHostManager : ITunerHostManager
         }
         else
         {
+            // Preserve advanced FFmpeg properties that the web UI doesn't know about.
+            // Without this, saving a tuner from the UI overwrites these with null.
+            // Sending -1 explicitly clears a value back to null (system default).
+            var existing = config.TunerHosts[index];
+            info.AnalyzeDurationMs = PreserveOrClear(info.AnalyzeDurationMs, existing.AnalyzeDurationMs);
+            info.ProbeSizeBytes = PreserveOrClear(info.ProbeSizeBytes, existing.ProbeSizeBytes);
+            info.MaxDelayUs = PreserveOrClear(info.MaxDelayUs, existing.MaxDelayUs);
+            info.SegmentLength = PreserveOrClear(info.SegmentLength, existing.SegmentLength);
+            info.MinSegments = PreserveOrClear(info.MinSegments, existing.MinSegments);
+            info.HlsInitTimeSec = PreserveOrClear(info.HlsInitTimeSec, existing.HlsInitTimeSec);
+            if (info.OutputFFlags is null)
+            {
+                info.OutputFFlags = existing.OutputFFlags;
+            }
+            else if (info.OutputFFlags.Length == 0)
+            {
+                info.OutputFFlags = null;
+            }
+
             config.TunerHosts[index] = info;
         }
 
@@ -149,6 +168,20 @@ public class TunerHostManager : ITunerHostManager
                 await SaveTunerHost(configuredDevice).ConfigureAwait(false);
             }
         }
+    }
+
+    /// <summary>
+    /// Preserves an existing value when the incoming value is null (UI didn't send it),
+    /// or clears to null when the incoming value is -1 (explicit reset to default).
+    /// </summary>
+    private static int? PreserveOrClear(int? incoming, int? existing)
+    {
+        if (incoming is null)
+        {
+            return existing;
+        }
+
+        return incoming == -1 ? null : incoming;
     }
 
     private async Task<IList<TunerHostInfo>> DiscoverDevices(ITunerHost host, int discoveryDurationMs, CancellationToken cancellationToken)

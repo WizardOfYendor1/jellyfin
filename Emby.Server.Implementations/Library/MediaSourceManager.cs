@@ -681,7 +681,7 @@ namespace Emby.Server.Implementations.Library
 
                 if (isLiveStream)
                 {
-                    mediaSource.AnalyzeDurationMs = 3000;
+                    mediaSource.AnalyzeDurationMs ??= 3000;
                 }
 
                 mediaInfo = await _mediaEncoder.GetMediaInfo(
@@ -788,7 +788,7 @@ namespace Emby.Server.Implementations.Library
 
             if (isLiveStream)
             {
-                mediaSource.AnalyzeDurationMs = 3000;
+                mediaSource.AnalyzeDurationMs ??= 3000;
             }
 
             // Try to estimate this

@@ -202,7 +202,14 @@ namespace Jellyfin.LiveTv.TunerHosts
 
                 RequiredHttpHeaders = httpHeaders,
                 UseMostCompatibleTranscodingProfile = !info.AllowFmp4TranscodingContainer,
-                FallbackMaxStreamingBitrate = info.FallbackMaxStreamingBitrate
+                FallbackMaxStreamingBitrate = info.FallbackMaxStreamingBitrate,
+                AnalyzeDurationMs = info.AnalyzeDurationMs,
+                ProbeSizeBytes = info.ProbeSizeBytes,
+                MaxDelayUs = info.MaxDelayUs,
+                OutputFFlags = info.OutputFFlags,
+                OverrideSegmentLength = info.SegmentLength,
+                OverrideMinSegments = info.MinSegments,
+                HlsInitTimeSec = info.HlsInitTimeSec
             };
 
             mediaSource.InferTotalBitrate();
