@@ -18,6 +18,7 @@ using MediaBrowser.Common.Configuration;
 using MediaBrowser.Common.Extensions;
 using MediaBrowser.Controller.Configuration;
 using MediaBrowser.Controller.Library;
+using MediaBrowser.Controller.LiveTv;
 using MediaBrowser.Controller.MediaEncoding;
 using MediaBrowser.Controller.Session;
 using MediaBrowser.Controller.Streaming;
@@ -44,6 +45,7 @@ public sealed class TranscodeManager : ITranscodeManager, IDisposable
     private readonly IMediaEncoder _mediaEncoder;
     private readonly IMediaSourceManager _mediaSourceManager;
     private readonly IAttachmentExtractor _attachmentExtractor;
+    private readonly IEnumerable<IHlsPlaylistProvider> _hlsPlaylistProviders;
 
     private readonly List<TranscodingJob> _activeTranscodingJobs = new();
     private readonly AsyncKeyedLocker<string> _transcodingLocks = new(o =>
@@ -67,6 +69,7 @@ public sealed class TranscodeManager : ITranscodeManager, IDisposable
     /// <param name="mediaEncoder">The <see cref="IMediaEncoder"/>.</param>
     /// <param name="mediaSourceManager">The <see cref="IMediaSourceManager"/>.</param>
     /// <param name="attachmentExtractor">The <see cref="IAttachmentExtractor"/>.</param>
+    /// <param name="hlsPlaylistProviders">The <see cref="IHlsPlaylistProvider"/> implementations.</param>
     public TranscodeManager(
         ILoggerFactory loggerFactory,
         IFileSystem fileSystem,
@@ -77,7 +80,8 @@ public sealed class TranscodeManager : ITranscodeManager, IDisposable
         EncodingHelper encodingHelper,
         IMediaEncoder mediaEncoder,
         IMediaSourceManager mediaSourceManager,
-        IAttachmentExtractor attachmentExtractor)
+        IAttachmentExtractor attachmentExtractor,
+        IEnumerable<IHlsPlaylistProvider> hlsPlaylistProviders)
     {
         _loggerFactory = loggerFactory;
         _fileSystem = fileSystem;
@@ -89,6 +93,7 @@ public sealed class TranscodeManager : ITranscodeManager, IDisposable
         _mediaEncoder = mediaEncoder;
         _mediaSourceManager = mediaSourceManager;
         _attachmentExtractor = attachmentExtractor;
+        _hlsPlaylistProviders = hlsPlaylistProviders;
 
         _logger = loggerFactory.CreateLogger<TranscodeManager>();
         DeleteEncodedMediaCache();
@@ -224,13 +229,74 @@ public sealed class TranscodeManager : ITranscodeManager, IDisposable
         lock (_activeTranscodingJobs)
         {
             _activeTranscodingJobs.Remove(job);
+        }
 
-            if (job.CancellationTokenSource?.IsCancellationRequested == false)
+        // For LiveTV streams, offer the running FFmpeg process to warm pool providers
+        // before killing it. If adopted, the provider takes full ownership of the
+        // process, files, and live stream — we skip all cleanup.
+        if (job.MediaSource?.IsInfiniteStream == true
+            && job.Process is not null
+            && !job.HasExited
+            && !string.IsNullOrWhiteSpace(job.MediaSource.Id)
+            && !string.IsNullOrWhiteSpace(job.Path)
+            && job.EncodingProfile is not null)
+        {
+            var mediaSourceId = job.MediaSource.Id;
+            var playlistPath = job.Path;
+            var encodingProfile = job.EncodingProfile;
+
+            foreach (var provider in _hlsPlaylistProviders)
             {
-#pragma warning disable CA1849 // Can't await in lock block
-                job.CancellationTokenSource.Cancel();
-#pragma warning restore CA1849
+                var adoptionContext = new HlsProcessAdoptionContext
+                {
+                    MediaSourceId = mediaSourceId,
+                    EncodingProfile = encodingProfile,
+                    PlaylistPath = playlistPath,
+                    FfmpegProcess = job.Process!,
+                    LiveStreamId = job.LiveStreamId,
+                    PlaySessionId = job.PlaySessionId,
+                    DeviceId = job.DeviceId,
+                    MediaSource = job.MediaSource
+                };
+
+                if (provider.TryAdoptProcess(adoptionContext))
+                {
+                    _logger.LogInformation(
+                        "HLS playlist provider adopted FFmpeg process for media source {MediaSourceId} profile {Profile}. Skipping kill. PlaylistPath: {Path}",
+                        mediaSourceId,
+                        encodingProfile.ToString(),
+                        playlistPath);
+
+                    // Bump the live stream's ConsumerCount so that when
+                    // SessionManager.OnPlaybackStopped → CloseLiveStreamIfNeededAsync
+                    // runs (independently, after this method returns), it decrements
+                    // to 1 instead of 0 and does NOT actually close the stream.
+                    // The warm pool provider is responsible for eventually calling
+                    // IMediaSourceManager.CloseLiveStream() when it evicts the process.
+                    if (!string.IsNullOrWhiteSpace(job.LiveStreamId))
+                    {
+                        var liveStream = _mediaSourceManager.GetLiveStreamInfo(job.LiveStreamId);
+                        if (liveStream is not null)
+                        {
+                            liveStream.ConsumerCount++;
+                            _logger.LogInformation(
+                                "Bumped live stream {LiveStreamId} consumer count to {Count} to keep alive for warm pool",
+                                job.LiveStreamId,
+                                liveStream.ConsumerCount);
+                        }
+                    }
+
+                    // Process is now owned by the warm pool — do NOT cancel CTS,
+                    // stop the process, delete files, or close the live stream.
+                    return;
+                }
             }
+        }
+
+        // No warm pool adoption — proceed with normal kill
+        if (job.CancellationTokenSource?.IsCancellationRequested == false)
+        {
+            await job.CancellationTokenSource.CancelAsync().ConfigureAwait(false);
         }
 
         job.Stop();
@@ -597,7 +663,15 @@ public sealed class TranscodeManager : ITranscodeManager, IDisposable
                 Id = transcodingJobId,
                 PlaySessionId = playSessionId,
                 LiveStreamId = liveStreamId,
-                MediaSource = state.MediaSource
+                MediaSource = state.MediaSource,
+                EncodingProfile = new EncodingProfile(
+                    state.OutputVideoCodec,
+                    state.OutputAudioCodec,
+                    state.OutputVideoBitrate,
+                    state.OutputAudioBitrate,
+                    state.OutputWidth,
+                    state.OutputHeight,
+                    state.OutputAudioChannels)
             };
 
             _activeTranscodingJobs.Add(job);

@@ -59,6 +59,8 @@ namespace Emby.Server.Implementations.Library
         private readonly ConcurrentDictionary<string, ILiveStream> _openStreams = new ConcurrentDictionary<string, ILiveStream>(StringComparer.OrdinalIgnoreCase);
         private readonly AsyncNonKeyedLocker _liveStreamLocker = new(1);
         private readonly JsonSerializerOptions _jsonOptions = JsonDefaults.Options;
+        private readonly IEnumerable<ILiveStreamProvider> _liveStreamProviders;
+        private readonly IEnumerable<ITunerResourceProvider> _tunerResourceProviders;
 
         private IMediaSourceProvider[] _providers;
 
@@ -75,7 +77,9 @@ namespace Emby.Server.Implementations.Library
             IMediaEncoder mediaEncoder,
             IDirectoryService directoryService,
             IMediaStreamRepository mediaStreamRepository,
-            IMediaAttachmentRepository mediaAttachmentRepository)
+            IMediaAttachmentRepository mediaAttachmentRepository,
+            IEnumerable<ILiveStreamProvider> liveStreamProviders,
+            IEnumerable<ITunerResourceProvider> tunerResourceProviders)
         {
             _appHost = appHost;
             _itemRepo = itemRepo;
@@ -90,6 +94,8 @@ namespace Emby.Server.Implementations.Library
             _directoryService = directoryService;
             _mediaStreamRepository = mediaStreamRepository;
             _mediaAttachmentRepository = mediaAttachmentRepository;
+            _liveStreamProviders = liveStreamProviders;
+            _tunerResourceProviders = tunerResourceProviders;
         }
 
         public void AddParts(IEnumerable<IMediaSourceProvider> providers)
@@ -498,6 +504,42 @@ namespace Emby.Server.Implementations.Library
 
         public async Task<Tuple<LiveStreamResponse, IDirectStreamProvider>> OpenLiveStreamInternal(LiveStreamRequest request, CancellationToken cancellationToken)
         {
+            try
+            {
+                return await OpenLiveStreamInternalCore(request, cancellationToken).ConfigureAwait(false);
+            }
+            catch (LiveTvConflictException) when (_tunerResourceProviders.Any())
+            {
+                // All tuners are in use. Ask registered resource providers to release
+                // a non-essential resource (e.g., a warm pool entry) so we can retry.
+                // The lock has been released by the using block's dispose, so providers
+                // may safely call CloseLiveStream during this window.
+                _logger.LogInformation("All tuners in use, asking resource providers to release a tuner");
+
+                var freed = false;
+                foreach (var provider in _tunerResourceProviders)
+                {
+                    if (await provider.TryReleaseTunerResourceAsync(cancellationToken).ConfigureAwait(false))
+                    {
+                        freed = true;
+                        _logger.LogInformation("Tuner resource released by {Provider}, retrying stream open", provider.GetType().Name);
+                        break;
+                    }
+                }
+
+                if (!freed)
+                {
+                    _logger.LogWarning("No tuner resources could be freed, stream open will fail");
+                    throw;
+                }
+
+                // Retry once with a fresh lock and fresh _openStreams snapshot
+                return await OpenLiveStreamInternalCore(request, cancellationToken).ConfigureAwait(false);
+            }
+        }
+
+        private async Task<Tuple<LiveStreamResponse, IDirectStreamProvider>> OpenLiveStreamInternalCore(LiveStreamRequest request, CancellationToken cancellationToken)
+        {
             MediaSourceInfo mediaSource;
             ILiveStream liveStream;
 
@@ -872,6 +914,22 @@ namespace Emby.Server.Implementations.Library
 
                     if (liveStream.ConsumerCount <= 0)
                     {
+                        // Offer to live stream providers before closing.
+                        // If adopted, the stream stays alive in _openStreams for reuse
+                        // via existing stream sharing in DefaultLiveTvService.
+                        foreach (var liveStreamProvider in _liveStreamProviders)
+                        {
+                            if (liveStreamProvider.TryAdoptStream(id, liveStream))
+                            {
+                                liveStream.ConsumerCount++;
+                                _logger.LogInformation(
+                                    "Live stream provider adopted live stream {0}, consumer count bumped to {1}",
+                                    id,
+                                    liveStream.ConsumerCount);
+                                return;
+                            }
+                        }
+
                         _openStreams.TryRemove(id, out _);
 
                         _logger.LogInformation("Closing live stream {0}", id);
