@@ -136,6 +136,47 @@ public class ItemUpdateController : BaseJellyfinApiController
     }
 
     /// <summary>
+    /// Adds and removes tags on an item without replacing the full item payload.
+    /// Tags in the Remove list are removed first, then tags in the Add list are appended.
+    /// Duplicate and whitespace-only entries are ignored. Only the specified item is
+    /// modified — child items (seasons, episodes, tracks) are not affected.
+    /// </summary>
+    /// <param name="itemId">The item id.</param>
+    /// <param name="request">The tags to add and remove.</param>
+    /// <response code="204">Item tags updated.</response>
+    /// <response code="404">Item not found.</response>
+    /// <returns>An <see cref="NoContentResult"/> on success, or a <see cref="NotFoundResult"/> if the item could not be found.</returns>
+    [HttpPost("Items/{itemId}/Tags")]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult> UpdateItemTags([FromRoute, Required] Guid itemId, [FromBody, Required] UpdateItemTagsRequest request)
+    {
+        var item = _libraryManager.GetItemById<BaseItem>(itemId, User.GetUserId());
+        if (item is null)
+        {
+            return NotFound();
+        }
+
+        var tagsToAdd = request.Add
+            .Where(t => !string.IsNullOrWhiteSpace(t))
+            .ToArray();
+        var tagsToRemove = request.Remove
+            .Where(t => !string.IsNullOrWhiteSpace(t))
+            .ToArray();
+
+        item.Tags = item.Tags
+            .Except(tagsToRemove, StringComparer.OrdinalIgnoreCase)
+            .Concat(tagsToAdd)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        item.OnMetadataChanged();
+        await item.UpdateToRepositoryAsync(ItemUpdateType.MetadataEdit, CancellationToken.None).ConfigureAwait(false);
+
+        return NoContent();
+    }
+
+    /// <summary>
     /// Gets metadata editor info for an item.
     /// </summary>
     /// <param name="itemId">The item id.</param>
