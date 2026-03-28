@@ -127,28 +127,55 @@ public sealed class BaseItemRepository
             .Where(e => e.ItemId == PlaceholderId)
             .ExecuteDelete();
 
-        // Remove intra-relatedItems UserData duplicates that would cause a UNIQUE constraint
+        // Merge intra-relatedItems UserData duplicates that would cause a UNIQUE constraint
         // violation when multiple items being deleted share the same (UserId, CustomDataKey).
         // This can happen when duplicate DB entries exist for the same episode (e.g. after
         // a directory rename causes the same item to be scanned more than once).
-        // Load into memory since EF Core cannot translate GroupBy+Skip to SQL.
-        var duplicateUserDataKeys = context.UserData
+        // We pick a "primary" entry (highest PlayCount, then most recent LastPlayedDate) as
+        // authoritative for all user-set fields, merge in the aggregate PlayCount and
+        // LastPlayedDate, then delete the remaining duplicates.
+        // Note: UserData has no per-field modification timestamps, so PlayCount is the best
+        // available signal for which entry the user actually interacted with. This heuristic
+        // can be wrong when the user interacted with both duplicates independently.
+        var duplicateGroups = context.UserData
             .WhereOneOrMany(relatedItems, e => e.ItemId)
-            .Select(e => new { e.ItemId, e.UserId, e.CustomDataKey, e.LastPlayedDate, e.PlaybackPositionTicks })
             .ToList()
             .GroupBy(e => new { e.UserId, e.CustomDataKey })
-            .Where(g => g.Count() > 1)
-            .SelectMany(g => g
-                .OrderByDescending(u => u.LastPlayedDate)
-                .ThenByDescending(u => u.PlaybackPositionTicks)
-                .Skip(1))
-            .ToList();
+            .Where(g => g.Count() > 1);
 
-        foreach (var key in duplicateUserDataKeys)
+        foreach (var group in duplicateGroups)
         {
+            var entries = group.ToList();
+            var survivor = entries[0];
+
+            // The primary entry is the one the user interacted with most.
+            var primary = entries
+                .OrderByDescending(e => e.PlayCount)
+                .ThenByDescending(e => e.LastPlayedDate)
+                .First();
+
+            // PlayCount and LastPlayedDate are monotonic/additive — take the max.
+            // All other fields come from the primary entry as-is.
             context.UserData
-                .Where(e => e.ItemId == key.ItemId && e.UserId == key.UserId && e.CustomDataKey == key.CustomDataKey)
-                .ExecuteDelete();
+                .Where(e => e.ItemId == survivor.ItemId && e.UserId == survivor.UserId && e.CustomDataKey == survivor.CustomDataKey)
+                .ExecuteUpdate(e => e
+                    .SetProperty(f => f.PlayCount, entries.Max(u => u.PlayCount))
+                    .SetProperty(f => f.IsFavorite, primary.IsFavorite)
+                    .SetProperty(f => f.Played, primary.Played)
+                    .SetProperty(f => f.LastPlayedDate, entries.Max(u => u.LastPlayedDate))
+                    .SetProperty(f => f.PlaybackPositionTicks, primary.PlaybackPositionTicks)
+                    .SetProperty(f => f.Rating, primary.Rating)
+                    .SetProperty(f => f.Likes, primary.Likes)
+                    .SetProperty(f => f.AudioStreamIndex, primary.AudioStreamIndex)
+                    .SetProperty(f => f.SubtitleStreamIndex, primary.SubtitleStreamIndex));
+
+            // Delete the non-survivor duplicates.
+            foreach (var entry in entries.Where(e => e.ItemId != survivor.ItemId))
+            {
+                context.UserData
+                    .Where(e => e.ItemId == entry.ItemId && e.UserId == entry.UserId && e.CustomDataKey == entry.CustomDataKey)
+                    .ExecuteDelete();
+            }
         }
 
         // Detach all user watch data
