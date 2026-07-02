@@ -64,7 +64,7 @@ namespace Jellyfin.LiveTv.IO
             using var durationToken = new CancellationTokenSource(duration);
             using var cancellationTokenSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, durationToken.Token);
 
-            await RecordFromFile(mediaSource, mediaSource.Path, targetFile, onStarted, cancellationTokenSource.Token).ConfigureAwait(false);
+            await RecordFromFile(mediaSource, mediaSource.EncoderPathOrDefault, targetFile, onStarted, cancellationTokenSource.Token).ConfigureAwait(false);
 
             _logger.LogInformation("Recording completed to file {Path}", targetFile);
         }

@@ -1082,8 +1082,9 @@ public class NetworkManager : INetworkManager, IDisposable
     }
 
     /// <inheritdoc/>
-    public bool TryGetAnyPublishedServerUriOverride(bool preferInternal, out string uri)
+    public bool TryGetAnyPublishedServerUriOverride(bool preferInternal, out string uri, out int? port)
     {
+        port = null;
         var overrides = _publishedServerUrls;
         var match = preferInternal
             ? overrides.FirstOrDefault(x => x.IsInternalOverride) ?? overrides.FirstOrDefault(x => x.IsExternalOverride)
@@ -1096,6 +1097,19 @@ public class NetworkManager : INetworkManager, IDisposable
         }
 
         uri = match.OverrideUri;
+
+        // Scheme-less overrides may carry an explicit port (e.g. "192.168.1.50:8097"); split it
+        // off the same way MatchesPublishedServerUrl does so the caller can apply it correctly.
+        if (!uri.StartsWith("http", StringComparison.OrdinalIgnoreCase))
+        {
+            var parts = uri.Split(':');
+            if (parts.Length > 1 && int.TryParse(parts[1], out var parsedPort))
+            {
+                uri = parts[0];
+                port = parsedPort;
+            }
+        }
+
         return true;
     }
 

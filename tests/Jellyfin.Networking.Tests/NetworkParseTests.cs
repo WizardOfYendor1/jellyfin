@@ -377,6 +377,67 @@ namespace Jellyfin.Networking.Tests
             Assert.Equal(result, intf);
         }
 
+        /// <summary>
+        /// Tests TryGetAnyPublishedServerUriOverride, used for server-generated URLs (e.g. Live TV
+        /// buffer file paths) that have no client source address to match against.
+        /// </summary>
+        [Theory]
+        // "all=" matches regardless of preferInternal.
+        [InlineData("all=https://media.example.com", true, true, "https://media.example.com", null)]
+        [InlineData("all=https://media.example.com", false, true, "https://media.example.com", null)]
+        // Only internal= configured: used regardless of preferInternal (nothing else to fall back to).
+        [InlineData("internal=https://internal.example.com", true, true, "https://internal.example.com", null)]
+        [InlineData("internal=https://internal.example.com", false, true, "https://internal.example.com", null)]
+        // Only external= configured: used regardless of preferInternal (nothing else to fall back to).
+        [InlineData("external=https://external.example.com", true, true, "https://external.example.com", null)]
+        [InlineData("external=https://external.example.com", false, true, "https://external.example.com", null)]
+        // No override configured at all.
+        [InlineData("", true, false, "", null)]
+        // Scheme-less override carrying an explicit port must have the port split off.
+        [InlineData("all=192.168.1.50:8097", true, true, "192.168.1.50", 8097)]
+        public void TestTryGetAnyPublishedServerUriOverride(string publishedServers, bool preferInternal, bool expectedFound, string expectedUri, int? expectedPort)
+        {
+            var conf = new NetworkConfiguration()
+            {
+                LocalNetworkSubnets = new[] { "192.168.1.0/24" },
+                EnableIPv4 = true,
+                PublishedServerUriBySubnet = string.IsNullOrEmpty(publishedServers) ? Array.Empty<string>() : new[] { publishedServers }
+            };
+
+            var startupConf = new Mock<IConfiguration>();
+            using var nm = new NetworkManager(NetworkParseTests.GetMockConfig(conf), startupConf.Object, new NullLogger<NetworkManager>());
+
+            var found = nm.TryGetAnyPublishedServerUriOverride(preferInternal, out var uri, out var port);
+
+            Assert.Equal(expectedFound, found);
+            if (expectedFound)
+            {
+                Assert.Equal(expectedUri, uri);
+                Assert.Equal(expectedPort, port);
+            }
+        }
+
+        [Fact]
+        public void TestTryGetAnyPublishedServerUriOverride_CliOverrideTakesPrecedence()
+        {
+            var conf = new NetworkConfiguration()
+            {
+                EnableIPv4 = true,
+                PublishedServerUriBySubnet = new[] { "all=https://dashboard-override.example.com" }
+            };
+
+            var startupConf = new Mock<IConfiguration>();
+            startupConf.Setup(x => x["PublishedServerUrl"]).Returns("https://cli-override.example.com");
+
+            using var nm = new NetworkManager(NetworkParseTests.GetMockConfig(conf), startupConf.Object, new NullLogger<NetworkManager>());
+
+            var found = nm.TryGetAnyPublishedServerUriOverride(true, out var uri, out var port);
+
+            Assert.True(found);
+            Assert.Equal("https://cli-override.example.com", uri);
+            Assert.Null(port);
+        }
+
         [Theory]
         [InlineData("185.10.10.10,200.200.200.200", "79.2.3.4", RemoteAccessPolicyResult.RejectDueToNotAllowlistedRemoteIP)]
         [InlineData("185.10.10.10", "185.10.10.10", RemoteAccessPolicyResult.Allow)]

@@ -82,7 +82,7 @@ namespace Jellyfin.LiveTv.IO
         private async Task RecordFromMediaSource(MediaSourceInfo mediaSource, string targetFile, TimeSpan duration, Action onStarted, CancellationToken cancellationToken)
         {
             using var response = await _httpClientFactory.CreateClient(NamedClient.Default)
-                .GetAsync(mediaSource.Path, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
+                .GetAsync(mediaSource.EncoderPathOrDefault, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
 
             _logger.LogInformation("Opened recording stream from tuner provider");
 

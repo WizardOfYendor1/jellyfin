@@ -88,11 +88,18 @@ namespace MediaBrowser.Common.Net
         /// Attempts to find any configured published-server-uri override (CLI/env or dashboard
         /// subnet overrides), without matching against a specific source address/subnet. Used for
         /// server-generated URLs that have no request context to match against.
+        /// With only one override direction configured (e.g. external= only), that override is
+        /// used regardless of <paramref name="preferInternal"/> - there is no client address here
+        /// to classify as internal/external, so this is a best-effort default rather than the
+        /// per-request semantics <see cref="GetBindAddress(HttpRequest, out int?)"/> provides.
+        /// When multiple subnet-specific overrides exist for the preferred direction, whichever
+        /// is listed first in configuration is used.
         /// </summary>
         /// <param name="preferInternal">Whether to prefer internal-flagged overrides over external ones.</param>
-        /// <param name="uri">The matched override URI, if any.</param>
+        /// <param name="uri">The matched override URI (host only, scheme/full-URL as configured), if any.</param>
+        /// <param name="port">The port parsed from a scheme-less "host:port" override, if any.</param>
         /// <returns><c>true</c> if an override is configured.</returns>
-        bool TryGetAnyPublishedServerUriOverride(bool preferInternal, out string uri);
+        bool TryGetAnyPublishedServerUriOverride(bool preferInternal, out string uri, out int? port);
 
         /// <summary>
         /// Retrieves the bind address to use in system URLs. (Server Discovery, PlayTo, LiveTV, SystemInfo)

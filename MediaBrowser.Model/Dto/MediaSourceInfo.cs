@@ -37,6 +37,20 @@ namespace MediaBrowser.Model.Dto
 
         public MediaProtocol? EncoderProtocol { get; set; }
 
+        /// <summary>
+        /// Gets the path server-side consumers (ffmpeg, ffprobe, recorders) should read from:
+        /// <see cref="EncoderPath"/> when set, otherwise <see cref="Path"/>. Client-facing code
+        /// should keep using <see cref="Path"/> directly.
+        /// </summary>
+        [JsonIgnore]
+        public string EncoderPathOrDefault => string.IsNullOrEmpty(EncoderPath) ? Path : EncoderPath;
+
+        /// <summary>
+        /// Gets the protocol paired with <see cref="EncoderPathOrDefault"/>.
+        /// </summary>
+        [JsonIgnore]
+        public MediaProtocol EncoderProtocolOrDefault => EncoderProtocol ?? Protocol;
+
         public MediaSourceType Type { get; set; }
 
         public string Container { get; set; }

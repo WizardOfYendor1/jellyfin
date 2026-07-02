@@ -970,9 +970,9 @@ namespace Emby.Server.Implementations
             // override (CLI/env override and dashboard subnet overrides both surface here).
             // Falls back to the server's own local address when nothing is configured, matching
             // the existing GetApiUrlForLocalAccess behavior exactly.
-            if (NetManager.TryGetAnyPublishedServerUriOverride(preferInternal, out var overrideUri))
+            if (NetManager.TryGetAnyPublishedServerUriOverride(preferInternal, out var overrideUri, out var overridePort))
             {
-                return GetLocalApiUrl(overrideUri);
+                return GetLocalApiUrl(overrideUri, null, overridePort);
             }
 
             return GetApiUrlForLocalAccess(allowHttps: allowHttps);

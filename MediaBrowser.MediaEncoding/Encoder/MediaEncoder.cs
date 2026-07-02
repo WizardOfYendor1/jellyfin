@@ -419,14 +419,21 @@ namespace MediaBrowser.MediaEncoding.Encoder
             var extractChapters = request.ExtractChapters;
             var extraArgs = GetExtraArguments(request);
 
+            // Prefer EncoderPath/EncoderProtocol (e.g. a local Live TV buffer address) over the
+            // client-facing Path so probing doesn't route through a published/external URL.
+            var mediaSource = request.MediaSource;
+            var inputPath = mediaSource.EncoderPathOrDefault;
+            var inputProtocol = mediaSource.EncoderProtocolOrDefault;
+            var prefix = mediaSource.IsoType == IsoType.BluRay ? "bluray" : "file";
+
             return GetMediaInfoInternal(
-                GetInputArgument(request.MediaSource.Path, request.MediaSource),
-                request.MediaSource.Path,
-                request.MediaSource.Protocol,
+                EncodingUtils.GetInputArgument(prefix, new[] { inputPath }, inputProtocol),
+                inputPath,
+                inputProtocol,
                 extractChapters,
                 extraArgs,
                 request.MediaType == DlnaProfileType.Audio,
-                request.MediaSource.VideoType,
+                mediaSource.VideoType,
                 cancellationToken);
         }
 
