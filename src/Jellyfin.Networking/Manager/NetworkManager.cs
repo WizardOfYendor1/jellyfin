@@ -1081,6 +1081,24 @@ public class NetworkManager : INetworkManager, IDisposable
         return true;
     }
 
+    /// <inheritdoc/>
+    public bool TryGetAnyPublishedServerUriOverride(bool preferInternal, out string uri)
+    {
+        var overrides = _publishedServerUrls;
+        var match = preferInternal
+            ? overrides.FirstOrDefault(x => x.IsInternalOverride) ?? overrides.FirstOrDefault(x => x.IsExternalOverride)
+            : overrides.FirstOrDefault(x => x.IsExternalOverride) ?? overrides.FirstOrDefault(x => x.IsInternalOverride);
+
+        if (match is null)
+        {
+            uri = string.Empty;
+            return false;
+        }
+
+        uri = match.OverrideUri;
+        return true;
+    }
+
     /// <summary>
     /// Attempts to match the source against the user defined bind interfaces.
     /// </summary>

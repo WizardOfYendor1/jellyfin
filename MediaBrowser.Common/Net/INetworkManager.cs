@@ -85,6 +85,16 @@ namespace MediaBrowser.Common.Net
         string GetBindAddress(IPAddress? source, out int? port, bool skipOverrides = false);
 
         /// <summary>
+        /// Attempts to find any configured published-server-uri override (CLI/env or dashboard
+        /// subnet overrides), without matching against a specific source address/subnet. Used for
+        /// server-generated URLs that have no request context to match against.
+        /// </summary>
+        /// <param name="preferInternal">Whether to prefer internal-flagged overrides over external ones.</param>
+        /// <param name="uri">The matched override URI, if any.</param>
+        /// <returns><c>true</c> if an override is configured.</returns>
+        bool TryGetAnyPublishedServerUriOverride(bool preferInternal, out string uri);
+
+        /// <summary>
         /// Retrieves the bind address to use in system URLs. (Server Discovery, PlayTo, LiveTV, SystemInfo)
         /// If no bind addresses are specified, an internal interface address is selected.
         /// (See <see cref="GetBindAddress(IPAddress, out int?, bool)"/>.

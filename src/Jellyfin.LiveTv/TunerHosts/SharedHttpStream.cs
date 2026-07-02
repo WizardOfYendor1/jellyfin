@@ -63,7 +63,12 @@ namespace Jellyfin.LiveTv.TunerHosts
 
             _ = StartStreaming(response, taskCompletionSource, LiveStreamCancellationTokenSource.Token);
 
-            MediaSource.Path = _appHost.GetApiUrlForLocalAccess() + "/LiveTv/LiveStreamFiles/" + UniqueId + "/stream.ts";
+            var streamFilePath = "/LiveTv/LiveStreamFiles/" + UniqueId + "/stream.ts";
+
+            // EncoderPath stays local for ffmpeg; Path is published for clients.
+            MediaSource.EncoderPath = _appHost.GetApiUrlForLocalAccess() + streamFilePath;
+            MediaSource.EncoderProtocol = MediaProtocol.Http;
+            MediaSource.Path = _appHost.GetPublishedApiUrlOrLocalAccess() + streamFilePath;
             MediaSource.Protocol = MediaProtocol.Http;
 
             var res = await taskCompletionSource.Task.ConfigureAwait(false);

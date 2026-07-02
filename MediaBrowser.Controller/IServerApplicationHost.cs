@@ -73,6 +73,17 @@ namespace MediaBrowser.Controller
         string GetApiUrlForLocalAccess(IPAddress ipAddress = null, bool allowHttps = true);
 
         /// <summary>
+        /// Gets a URL suitable for handing to clients when no per-request context is available
+        /// (e.g. Live TV buffer file paths generated outside an HTTP request). Prefers any
+        /// configured published-server-uri override (CLI/env or dashboard); falls back to
+        /// <see cref="GetApiUrlForLocalAccess"/> when nothing is configured.
+        /// </summary>
+        /// <param name="preferInternal">Whether to prefer internal-flagged overrides over external ones.</param>
+        /// <param name="allowHttps">A value indicating whether to allow HTTPS in the fallback case.</param>
+        /// <returns>The published or local API URL.</returns>
+        string GetPublishedApiUrlOrLocalAccess(bool preferInternal = true, bool allowHttps = true);
+
+        /// <summary>
         /// Gets a local (LAN) URL that can be used to access the API.
         /// Note: if passing non-null scheme or port it is up to the caller to ensure they form the correct pair.
         /// </summary>

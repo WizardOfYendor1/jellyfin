@@ -963,6 +963,22 @@ namespace Emby.Server.Implementations
         }
 
         /// <inheritdoc/>
+        public string GetPublishedApiUrlOrLocalAccess(bool preferInternal = true, bool allowHttps = true)
+        {
+            // Server-generated URLs (e.g. Live TV buffer file paths) have no request context to
+            // match a client subnet against, so just take any configured published-server-uri
+            // override (CLI/env override and dashboard subnet overrides both surface here).
+            // Falls back to the server's own local address when nothing is configured, matching
+            // the existing GetApiUrlForLocalAccess behavior exactly.
+            if (NetManager.TryGetAnyPublishedServerUriOverride(preferInternal, out var overrideUri))
+            {
+                return GetLocalApiUrl(overrideUri);
+            }
+
+            return GetApiUrlForLocalAccess(allowHttps: allowHttps);
+        }
+
+        /// <inheritdoc/>
         public string GetLocalApiUrl(string hostname, string scheme = null, int? port = null)
         {
             // If the smartAPI doesn't start with http then treat it as a host or ip.
